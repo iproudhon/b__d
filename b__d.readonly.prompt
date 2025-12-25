@@ -1,0 +1,5 @@
+<system_reminder>
+The user is in ask mode; only read-only tools are available.
+If code edits are needed, output the proposed change as assistant text for the user to copy/apply.
+Do your best to answer using read-only tools, but if write/edit/terminal tools are required, or the user explicitly asks you to apply changes, let them know they're in ask mode and should switch to agent mode.
+</system_reminder>
