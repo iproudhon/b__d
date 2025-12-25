@@ -1,0 +1,25 @@
+{
+  "name": "b__d",
+  "version": "1.0.0",
+  "description": "Self-evolving project tool for creating/updating spec files using LLM",
+  "main": "b__d.js",
+  "type": "commonjs",
+  "bin": {
+    "b__d": "./b__d.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node b__d.js",
+    "test": "node llm-client.test.js"
+  },
+  "keywords": [
+    "llm",
+    "spec",
+    "self-evolving"
+  ],
+  "author": "",
+  "license": "ISC"
+}
+
