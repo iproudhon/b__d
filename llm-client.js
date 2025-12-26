@@ -1482,6 +1482,18 @@ Summary:`;
             let existingContent = fs.readFileSync(fullPath, 'utf8');
             const existingLines = existingContent.split('\n');
             
+            // Check if code_edit is a unified diff format (patch format)
+            const isUnifiedDiff = code_edit.trim().includes('@@') && /^@@/.test(code_edit.trim());
+            
+            if (isUnifiedDiff) {
+                // Apply unified diff/patch format
+                const patchedContent = this.applyUnifiedDiff(existingContent, code_edit);
+                fs.writeFileSync(fullPath, patchedContent, 'utf8');
+                const result = { success: true, action: 'patched' };
+                this.emit('tool:complete', { toolName, args, result });
+                return result;
+            }
+            
             // Check if code_edit contains the special comment pattern
             const skipCommentPatterns = [
                 /^\/\/ \.\.\. existing code \.\.\./,
@@ -1631,6 +1643,111 @@ Summary:`;
             this.emit('tool:error', { toolName, args, error: error.message });
             throw error;
         }
+    }
+
+    /**
+     * Apply unified diff/patch format to file content
+     * @param {string} originalContent - Original file content
+     * @param {string} diffText - Unified diff text
+     * @returns {string} - Patched content
+     */
+    applyUnifiedDiff(originalContent, diffText) {
+        const originalLines = originalContent.split('\n');
+        const diffLines = diffText.split('\n');
+        const resultLines = [];
+        let originalIndex = 0;
+        
+        // Find all hunks (sections between @@ markers)
+        const hunks = [];
+        let currentHunk = null;
+        
+        for (let i = 0; i < diffLines.length; i++) {
+            const line = diffLines[i];
+            const hunkHeaderMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+            
+            if (hunkHeaderMatch) {
+                // Save previous hunk if exists
+                if (currentHunk) {
+                    hunks.push(currentHunk);
+                }
+                
+                // Start new hunk
+                const oldStart = parseInt(hunkHeaderMatch[1]) - 1; // Convert to 0-based index
+                const oldCount = parseInt(hunkHeaderMatch[2] || '1');
+                const newStart = parseInt(hunkHeaderMatch[3]) - 1; // Convert to 0-based index
+                const newCount = parseInt(hunkHeaderMatch[4] || '1');
+                
+                currentHunk = {
+                    oldStart: oldStart,
+                    oldEnd: oldStart + oldCount,
+                    lines: []
+                };
+            } else if (currentHunk && (line.startsWith(' ') || line.startsWith('+') || line.startsWith('-'))) {
+                // Add line to current hunk
+                currentHunk.lines.push(line);
+            }
+        }
+        
+        // Add last hunk
+        if (currentHunk) {
+            hunks.push(currentHunk);
+        }
+        
+        // Apply each hunk
+        for (const hunk of hunks) {
+            // Copy lines before hunk (up to hunk.oldStart)
+            while (originalIndex < hunk.oldStart && originalIndex < originalLines.length) {
+                resultLines.push(originalLines[originalIndex]);
+                originalIndex++;
+            }
+            
+            // Process hunk lines
+            // Track position in original file within this hunk
+            let hunkOriginalIndex = originalIndex;
+            
+            for (const line of hunk.lines) {
+                if (line.startsWith(' ')) {
+                    // Context line (unchanged) - should match existing line
+                    const content = line.substring(1); // Remove leading space
+                    if (hunkOriginalIndex < originalLines.length && originalLines[hunkOriginalIndex] === content) {
+                        resultLines.push(content);
+                        hunkOriginalIndex++;
+                        originalIndex++;
+                    } else {
+                        // Context doesn't match exactly - still apply it but warn
+                        // In practice, this shouldn't happen if the diff is correct
+                        resultLines.push(content);
+                        if (hunkOriginalIndex < originalLines.length) {
+                            hunkOriginalIndex++;
+                            originalIndex++;
+                        }
+                    }
+                } else if (line.startsWith('-')) {
+                    // Deletion - skip this line in original
+                    if (hunkOriginalIndex < originalLines.length) {
+                        hunkOriginalIndex++;
+                        originalIndex++;
+                    }
+                } else if (line.startsWith('+')) {
+                    // Addition - add new line (don't advance original index)
+                    const content = line.substring(1); // Remove leading +
+                    resultLines.push(content);
+                }
+            }
+            
+            // Ensure originalIndex is at the correct position after processing hunk
+            // We've already advanced originalIndex while processing hunk lines
+            // Just need to make sure we're at the right position
+            originalIndex = hunkOriginalIndex;
+        }
+        
+        // Copy remaining lines after last hunk
+        while (originalIndex < originalLines.length) {
+            resultLines.push(originalLines[originalIndex]);
+            originalIndex++;
+        }
+        
+        return resultLines.join('\n');
     }
 
     /**
