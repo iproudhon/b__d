@@ -8,6 +8,7 @@
  *   TEST_DUCKDUCKGO_ONLY=1 - Run only DuckDuckGo web search tests
  *   TEST_BRAVE_ONLY=1 - Run only Brave web search tests
  *   TEST_LINTS_ONLY=1 - Run only read_lints tests
+ *   TEST_TODO_ONLY=1 - Run only todo_write tests
  *   TEST_VERBOSE=1 - Show debug output and full JSON results
  * 
  * Examples:
@@ -15,6 +16,7 @@
  *   TEST_DUCKDUCKGO_ONLY=1 node llm-client.test.js   # Run only DuckDuckGo tests
  *   TEST_BRAVE_ONLY=1 node llm-client.test.js        # Run only Brave tests
  *   TEST_LINTS_ONLY=1 node llm-client.test.js        # Run only linter tests
+ *   TEST_TODO_ONLY=1 node llm-client.test.js        # Run only todo tests
  *   TEST_VERBOSE=1 node llm-client.test.js           # Run all tests with verbose output
  */
 
@@ -104,27 +106,27 @@ process.on('exit', () => {
     }
 });
 
-test('LLMClient - Initialization', { skip: process.env.TEST_LINTS_ONLY === '1' }, () => {
+test('LLMClient - Initialization', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, () => {
     // Test that LLMClient class exists and can be instantiated
     assert.ok(LLMClient);
     // Note: Actual instantiation requires valid config files
 });
 
-test('LLMClient - should accept custom model', { skip: process.env.TEST_LINTS_ONLY === '1' }, () => {
+test('LLMClient - should accept custom model', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, () => {
     const client = new LLMClient({
         model: 'custom-model'
     });
     assert.strictEqual(client.model, 'custom-model');
 });
 
-test('LLMClient - should accept custom mode', { skip: process.env.TEST_LINTS_ONLY === '1' }, () => {
+test('LLMClient - should accept custom mode', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, () => {
     const client = new LLMClient({
         mode: 'ask'
     });
     assert.strictEqual(client.mode, 'ask');
 });
 
-test('LLMClient - should accept hooks', { skip: process.env.TEST_LINTS_ONLY === '1' }, () => {
+test('LLMClient - should accept hooks', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, () => {
     const onRequest = () => {};
     const onResponse = () => {};
     const onToolStdout = () => {};
@@ -143,7 +145,7 @@ test('LLMClient - should accept hooks', { skip: process.env.TEST_LINTS_ONLY === 
     assert.strictEqual(client.onToolStderr, onToolStderr);
 });
 
-test('LLMClient - Mode handling: should filter tools in ask mode', { skip: process.env.TEST_LINTS_ONLY === '1' }, () => {
+test('LLMClient - Mode handling: should filter tools in ask mode', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, () => {
             // This would need proper mocking of file reads
             // For now, we test the filterTools logic conceptually
             const tools = createMockTools();
@@ -159,7 +161,7 @@ test('LLMClient - Mode handling: should filter tools in ask mode', { skip: proce
     assert.strictEqual(hasDisallowedTool, false, 'Ask mode should not include disallowed tools');
 });
 
-test('LLMClient - Mode handling: should include all tools in agent mode', { skip: process.env.TEST_LINTS_ONLY === '1' }, () => {
+test('LLMClient - Mode handling: should include all tools in agent mode', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, () => {
     const tools = createMockTools();
     const client = new LLMClient({ mode: 'agent' });
     
@@ -167,7 +169,7 @@ test('LLMClient - Mode handling: should include all tools in agent mode', { skip
     assert.strictEqual(filtered.length, tools.length, 'Agent mode should include all tools');
 });
 
-test('LLMClient - Mode handling: should allow mode switching', { skip: process.env.TEST_LINTS_ONLY === '1' }, () => {
+test('LLMClient - Mode handling: should allow mode switching', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, () => {
     const client = new LLMClient({ mode: 'ask' });
     assert.strictEqual(client.mode, 'ask');
     
@@ -178,14 +180,14 @@ test('LLMClient - Mode handling: should allow mode switching', { skip: process.e
     assert.strictEqual(client.mode, 'ask');
 });
 
-test('LLMClient - Mode handling: should reject invalid mode', { skip: process.env.TEST_LINTS_ONLY === '1' }, () => {
+test('LLMClient - Mode handling: should reject invalid mode', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, () => {
     const client = new LLMClient();
     assert.throws(() => {
         client.setMode('invalid');
     }, /Mode must be "ask" or "agent"/);
 });
 
-test('LLMClient - Tool execution: should execute read_file tool', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute read_file tool', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
             // Create a test file
             const testFile = path.join(__dirname, 'test-file.txt');
             const testContent = 'Hello, World!';
@@ -206,7 +208,7 @@ test('LLMClient - Tool execution: should execute read_file tool', { skip: proces
     }
 });
 
-test('LLMClient - Tool execution: should execute read_file with offset and limit', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute read_file with offset and limit', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
             const testFile = path.join(__dirname, 'test-file-lines.txt');
             const testContent = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
             fs.writeFileSync(testFile, testContent);
@@ -227,7 +229,7 @@ test('LLMClient - Tool execution: should execute read_file with offset and limit
     }
 });
 
-test('LLMClient - Tool execution: should execute list_dir tool', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute list_dir tool', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
             const client = new LLMClient();
             const result = await client.executeListDir({
                 target_directory: __dirname
@@ -238,7 +240,7 @@ test('LLMClient - Tool execution: should execute list_dir tool', { skip: process
     assert.ok(result.items.some(item => item.name === 'llm-client.js'));
 });
 
-test('LLMClient - Tool execution: should execute terminal command with streaming', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute terminal command with streaming', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
             const client = new LLMClient();
             let stdoutData = '';
             let stderrData = '';
@@ -260,7 +262,7 @@ test('LLMClient - Tool execution: should execute terminal command with streaming
     assert.ok(stdoutData.includes('test output') || result.stdout.includes('test output'));
 });
 
-test('LLMClient - Tool execution: should execute terminal command in background', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute terminal command in background', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
             const client = new LLMClient();
             const result = await client.executeTerminalCommand({
                 command: 'sleep 0.1',
@@ -271,7 +273,7 @@ test('LLMClient - Tool execution: should execute terminal command in background'
     assert.strictEqual(result.status, 'background');
 });
 
-test('LLMClient - Tool execution: should prevent edit_file in ask mode', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should prevent edit_file in ask mode', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
             const client = new LLMClient({ mode: 'ask' });
             
             await assert.rejects(
@@ -286,7 +288,7 @@ test('LLMClient - Tool execution: should prevent edit_file in ask mode', { skip:
     );
 });
 
-test('LLMClient - Tool execution: should prevent delete_file in ask mode', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should prevent delete_file in ask mode', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
             const client = new LLMClient({ mode: 'ask' });
             
             await assert.rejects(
@@ -299,7 +301,7 @@ test('LLMClient - Tool execution: should prevent delete_file in ask mode', { ski
     );
 });
 
-test('LLMClient - Hooks: should assign onRequest hook', { skip: process.env.TEST_LINTS_ONLY === '1' }, () => {
+test('LLMClient - Hooks: should assign onRequest hook', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, () => {
             const onRequest = () => {};
             const client = new LLMClient({
                 onRequest
@@ -307,7 +309,7 @@ test('LLMClient - Hooks: should assign onRequest hook', { skip: process.env.TEST
     assert.strictEqual(client.onRequest, onRequest);
 });
 
-test('LLMClient - Hooks: should assign onResponse hook', { skip: process.env.TEST_LINTS_ONLY === '1' }, () => {
+test('LLMClient - Hooks: should assign onResponse hook', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, () => {
             const onResponse = () => {};
             const client = new LLMClient({
                 onResponse
@@ -315,7 +317,7 @@ test('LLMClient - Hooks: should assign onResponse hook', { skip: process.env.TES
     assert.strictEqual(client.onResponse, onResponse);
 });
 
-test('LLMClient - Hooks: should stream stdout via hook', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Hooks: should stream stdout via hook', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
             const stdoutChunks = [];
 
             const client = new LLMClient({
@@ -334,7 +336,7 @@ test('LLMClient - Hooks: should stream stdout via hook', { skip: process.env.TES
     assert.ok(stdoutChunks.length >= 0); // Hook exists and may be called
 });
 
-test('LLMClient - Hooks: should stream stderr via hook', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Hooks: should stream stderr via hook', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
             const stderrChunks = [];
 
             const client = new LLMClient({
@@ -353,7 +355,7 @@ test('LLMClient - Hooks: should stream stderr via hook', { skip: process.env.TES
     assert.ok(stderrChunks.length >= 0); // Hook exists and may be called
 });
 
-test('LLMClient - Event emission: should emit tool:start event', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Event emission: should emit tool:start event', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
             const client = new LLMClient();
             let eventEmitted = false;
 
@@ -375,7 +377,7 @@ test('LLMClient - Event emission: should emit tool:start event', { skip: process
     }
 });
 
-test('LLMClient - Event emission: should emit tool:complete event', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Event emission: should emit tool:complete event', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
     const client = new LLMClient();
     let eventEmitted = false;
 
@@ -398,7 +400,7 @@ test('LLMClient - Event emission: should emit tool:complete event', { skip: proc
     }
 });
 
-test('LLMClient - Event emission: should emit tool:error event on failure', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Event emission: should emit tool:error event on failure', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
             const client = new LLMClient();
             let errorEmitted = false;
 
@@ -420,7 +422,7 @@ test('LLMClient - Event emission: should emit tool:error event on failure', { sk
     // Note: This depends on how executeReadFile handles missing files
 });
 
-test('LLMClient - Parameter parsing: should parse string parameters to JSON', { skip: process.env.TEST_LINTS_ONLY === '1' }, () => {
+test('LLMClient - Parameter parsing: should parse string parameters to JSON', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, () => {
             const client = new LLMClient();
             const stringParams = '{"type": "object", "properties": {"name": {"type": "string"}}}';
             const parsed = client.parseParameters(stringParams);
@@ -429,7 +431,7 @@ test('LLMClient - Parameter parsing: should parse string parameters to JSON', { 
     assert.strictEqual(parsed.type, 'object');
 });
 
-test('LLMClient - Parameter parsing: should handle already parsed parameters', { skip: process.env.TEST_LINTS_ONLY === '1' }, () => {
+test('LLMClient - Parameter parsing: should handle already parsed parameters', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, () => {
             const client = new LLMClient();
             const objectParams = { type: 'object', properties: {} };
             const parsed = client.parseParameters(objectParams);
@@ -437,14 +439,14 @@ test('LLMClient - Parameter parsing: should handle already parsed parameters', {
     assert.strictEqual(parsed, objectParams);
 });
 
-test('LLMClient - Engine configuration: should find engine by name', { skip: process.env.TEST_LINTS_ONLY === '1' }, () => {
+test('LLMClient - Engine configuration: should find engine by name', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, () => {
             const client = new LLMClient();
             // This test requires actual engines file
             // For now, we test that the method exists
     assert.strictEqual(typeof client.findEngine, 'function');
 });
 
-test('LLMClient - Engine configuration: should throw error for unknown engine', { skip: process.env.TEST_LINTS_ONLY === '1' }, () => {
+test('LLMClient - Engine configuration: should throw error for unknown engine', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, () => {
             const client = new LLMClient();
             
             assert.throws(() => {
@@ -452,7 +454,7 @@ test('LLMClient - Engine configuration: should throw error for unknown engine', 
     }, /not found in llm-engines.json/);
 });
 
-test('LLMClient - Tool execution: should execute grep tool', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute grep tool', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
     const client = new LLMClient();
     
     // Create a test file
@@ -475,7 +477,7 @@ test('LLMClient - Tool execution: should execute grep tool', { skip: process.env
     }
 });
 
-test('LLMClient - Tool execution: should execute glob_file_search tool', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute glob_file_search tool', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
     const client = new LLMClient();
     
     const result = await client.executeGlobFileSearch({
@@ -492,7 +494,7 @@ test('LLMClient - Tool execution: should execute glob_file_search tool', { skip:
     }
 });
 
-test('LLMClient - Tool execution: should execute edit_file with full replacement', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute edit_file with full replacement', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
     const client = new LLMClient({ mode: 'agent' });
     const testFile = path.join(__dirname, 'test-edit.txt');
     
@@ -514,7 +516,7 @@ test('LLMClient - Tool execution: should execute edit_file with full replacement
     }
 });
 
-test('LLMClient - Tool execution: should execute edit_file with skip comments', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute edit_file with skip comments', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
     const client = new LLMClient({ mode: 'agent' });
     const testFile = path.join(__dirname, 'test-edit-skip.txt');
     
@@ -538,7 +540,7 @@ test('LLMClient - Tool execution: should execute edit_file with skip comments', 
     }
 });
 
-test('LLMClient - Tool execution: should create new file with edit_file', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should create new file with edit_file', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
     const client = new LLMClient({ mode: 'agent' });
     const testFile = path.join(__dirname, 'test-new-file.txt');
     
@@ -559,7 +561,7 @@ test('LLMClient - Tool execution: should create new file with edit_file', { skip
     }
 });
 
-test('LLMClient - Tool execution: should execute update_memory - create', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute update_memory - create', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
     const client = new LLMClient();
     const memoryFile = path.join(__dirname, '.memories.json');
     const originalExists = fs.existsSync(memoryFile);
@@ -593,7 +595,7 @@ test('LLMClient - Tool execution: should execute update_memory - create', { skip
     }
 });
 
-test('LLMClient - Tool execution: should execute update_memory - update', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute update_memory - update', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
     const client = new LLMClient();
     const memoryFile = path.join(__dirname, '.memories.json');
     const originalExists = fs.existsSync(memoryFile);
@@ -636,7 +638,7 @@ test('LLMClient - Tool execution: should execute update_memory - update', { skip
     }
 });
 
-test('LLMClient - Tool execution: should execute update_memory - delete', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute update_memory - delete', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
     const client = new LLMClient();
     const memoryFile = path.join(__dirname, '.memories.json');
     const originalExists = fs.existsSync(memoryFile);
@@ -675,98 +677,190 @@ test('LLMClient - Tool execution: should execute update_memory - delete', { skip
     }
 });
 
-test('LLMClient - Tool execution: should execute todo_write - create', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute todo_write - create', { skip: process.env.TEST_LINTS_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
+    const LLMClientModule = require('./llm-client');
+    const LLMClient = LLMClientModule;
+    const ChatSession = LLMClientModule.ChatSession;
     const client = new LLMClient();
-    const todoFile = path.join(__dirname, '.todos.json');
-    const originalExists = fs.existsSync(todoFile);
-    let originalContent = null;
     
-    if (originalExists) {
-        originalContent = fs.readFileSync(todoFile, 'utf8');
-    }
+    // Create a session with messages
+    const messages = [{ role: 'user', content: 'test session' }];
+    const session = new ChatSession(messages);
+    client.currentSession = session;
     
-    try {
-        const result = await client.executeTodoWrite({
-            merge: false,
-            todos: [
-                { id: '1', status: 'pending', content: 'Test todo 1' },
-                { id: '2', status: 'in_progress', content: 'Test todo 2' }
-            ]
-        });
-        
-        assert.strictEqual(result.success, true);
-        assert.strictEqual(result.count, 2);
-        
-        // Verify todos were saved
-        assert.ok(fs.existsSync(todoFile));
-        const todos = JSON.parse(fs.readFileSync(todoFile, 'utf8'));
-        assert.strictEqual(todos.length, 2);
-    } finally {
-        // Restore original file
-        if (originalExists && originalContent) {
-            fs.writeFileSync(todoFile, originalContent, 'utf8');
-        } else if (fs.existsSync(todoFile)) {
-            fs.unlinkSync(todoFile);
-        }
-    }
+    const result = await client.executeTodoWrite({
+        merge: false,
+        todos: [
+            { id: '1', status: 'pending', content: 'Test todo 1' },
+            { id: '2', status: 'in_progress', content: 'Test todo 2' }
+        ]
+    });
+    
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.count, 2);
+    
+    // Verify todos are in the session object
+    assert.strictEqual(session.todos.length, 2);
+    assert.strictEqual(session.todos[0].id, '1');
+    assert.strictEqual(session.todos[0].status, 'pending');
+    assert.strictEqual(session.todos[0].content, 'Test todo 1');
+    assert.strictEqual(session.todos[1].id, '2');
+    assert.strictEqual(session.todos[1].status, 'in_progress');
+    assert.strictEqual(session.todos[1].content, 'Test todo 2');
+    
+    // Verify session also has messages
+    assert.ok(Array.isArray(session.messages), 'Session should have messages');
+    assert.strictEqual(session.messages.length, 1);
 });
 
-test('LLMClient - Tool execution: should execute todo_write - merge', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute todo_write - merge', { skip: process.env.TEST_LINTS_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
+    const LLMClientModule = require('./llm-client');
+    const LLMClient = LLMClientModule;
+    const ChatSession = LLMClientModule.ChatSession;
     const client = new LLMClient();
-    const todoFile = path.join(__dirname, '.todos.json');
-    const originalExists = fs.existsSync(todoFile);
-    let originalContent = null;
     
-    if (originalExists) {
-        originalContent = fs.readFileSync(todoFile, 'utf8');
-    }
+    // Set up a session with messages
+    const messages = [{ role: 'user', content: 'merge test session' }];
+    const session = new ChatSession(messages);
+    client.currentSession = session;
     
-    try {
-        // Create initial todos
-        await client.executeTodoWrite({
-            merge: false,
-            todos: [
-                { id: '1', status: 'pending', content: 'Original todo' },
-                { id: '2', status: 'pending', content: 'Another todo' }
-            ]
-        });
-        
-        // Merge with updated and new todos
-        const result = await client.executeTodoWrite({
-            merge: true,
-            todos: [
-                { id: '1', status: 'completed', content: 'Updated todo' },
-                { id: '3', status: 'pending', content: 'New todo' }
-            ]
-        });
-        
-        assert.strictEqual(result.success, true);
-        assert.strictEqual(result.count, 3);
-        
-        // Verify todos were merged correctly
-        const todos = JSON.parse(fs.readFileSync(todoFile, 'utf8'));
-        const todo1 = todos.find(t => t.id === '1');
-        assert.strictEqual(todo1.status, 'completed');
-        assert.ok(todos.some(t => t.id === '3'));
-        assert.strictEqual(todos.length, 3);
-    } finally {
-        // Restore original file
-        if (originalExists && originalContent) {
-            fs.writeFileSync(todoFile, originalContent, 'utf8');
-        } else if (fs.existsSync(todoFile)) {
-            fs.unlinkSync(todoFile);
-        }
-    }
+    // Create initial todos
+    const result1 = await client.executeTodoWrite({
+        merge: false,
+        todos: [
+            { id: '1', status: 'pending', content: 'Original todo' },
+            { id: '2', status: 'pending', content: 'Another todo' }
+        ]
+    });
+    
+    // Verify initial state
+    assert.strictEqual(session.todos.length, 2);
+    
+    // Merge with updated and new todos (same session)
+    const result = await client.executeTodoWrite({
+        merge: true,
+        todos: [
+            { id: '1', status: 'completed', content: 'Updated todo' },
+            { id: '3', status: 'pending', content: 'New todo' }
+        ]
+    });
+    
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.count, 3);
+    
+    
+    // Verify todos were merged correctly in session object
+    const todos = session.todos;
+    assert.ok(Array.isArray(todos), 'Todos should be array in session');
+    
+    const todo1 = todos.find(t => t.id === '1');
+    assert.ok(todo1, 'Todo 1 should exist');
+    assert.strictEqual(todo1.status, 'completed');
+    assert.strictEqual(todo1.content, 'Updated todo');
+    
+    const todo2 = todos.find(t => t.id === '2');
+    assert.ok(todo2, 'Todo 2 should still exist');
+    assert.strictEqual(todo2.status, 'pending');
+    
+    assert.ok(todos.some(t => t.id === '3'), 'Todo 3 should exist');
+    assert.strictEqual(todos.length, 3);
 });
 
-test('LLMClient - Tool execution: should execute read_lints', { skip: process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute todo_write - session isolation', { skip: process.env.TEST_LINTS_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
+    const LLMClientModule = require('./llm-client');
+    const LLMClient = LLMClientModule;
+    const ChatSession = LLMClientModule.ChatSession;
+    const client = new LLMClient();
+    
+    // Create todos in session 1 (different messages)
+    const messages1 = [{ role: 'user', content: 'Session 1 message' }];
+    const session1 = new ChatSession(messages1);
+    client.currentSession = session1;
+    
+    const result1 = await client.executeTodoWrite({
+        merge: false,
+        todos: [
+            { id: '1', status: 'pending', content: 'Session 1 todo' }
+        ]
+    });
+    
+    // Create todos in session 2 (different messages = different session)
+    const messages2 = [{ role: 'user', content: 'Session 2 message' }];
+    const session2 = new ChatSession(messages2);
+    client.currentSession = session2;
+    
+    const result2 = await client.executeTodoWrite({
+        merge: false,
+        todos: [
+            { id: '1', status: 'pending', content: 'Session 2 todo' }
+        ]
+    });
+    
+    // Verify todos are stored separately per session
+    assert.strictEqual(session1.todos.length, 1, 'Session 1 should have 1 todo');
+    assert.strictEqual(session2.todos.length, 1, 'Session 2 should have 1 todo');
+    assert.strictEqual(session1.todos[0].content, 'Session 1 todo', 'Session 1 todo should have correct content');
+    assert.strictEqual(session2.todos[0].content, 'Session 2 todo', 'Session 2 todo should have correct content');
+    
+    // Verify sessions have their messages
+    assert.ok(Array.isArray(session1.messages), 'Session 1 should have messages');
+    assert.ok(Array.isArray(session2.messages), 'Session 2 should have messages');
+    assert.strictEqual(session1.messages[0].content, 'Session 1 message');
+    assert.strictEqual(session2.messages[0].content, 'Session 2 message');
+    
+    // Verify same session returns same todos
+    client.currentSession = session1;
+    const result3 = await client.executeTodoWrite({
+        merge: true,
+        todos: [
+            { id: '1', status: 'completed', content: 'Session 1 todo updated' }
+        ]
+    });
+    
+    
+    assert.strictEqual(session1.todos.length, 1, 'Session 1 should still have 1 todo');
+    assert.strictEqual(session1.todos[0].status, 'completed', 'Todo should be updated');
+    assert.strictEqual(session1.todos[0].content, 'Session 1 todo updated', 'Todo content should be updated');
+    assert.strictEqual(session2.todos.length, 1, 'Session 2 todos should be unchanged');
+    assert.strictEqual(session2.todos[0].content, 'Session 2 todo', 'Session 2 todo should be unchanged');
+});
+
+test('LLMClient - Tool execution: should execute todo_write - tied to chat messages', { skip: process.env.TEST_LINTS_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
+    const LLMClientModule = require('./llm-client');
+    const LLMClient = LLMClientModule;
+    const ChatSession = LLMClientModule.ChatSession;
+    const client = new LLMClient();
+    
+    // Create session with messages (as chat() would do)
+    const messages = [{ role: 'system', content: 'test' }, { role: 'user', content: 'hello' }];
+    const session = new ChatSession(messages);
+    client.currentSession = session;
+    
+    const result = await client.executeTodoWrite({
+        merge: false,
+        todos: [
+            { id: '1', status: 'pending', content: 'Chat session todo' }
+        ]
+    });
+    
+    // Verify todos stored with messages in session object
+    assert.ok(Array.isArray(session.todos), 'Todos should be array');
+    assert.ok(Array.isArray(session.messages), 'Messages should be array');
+    assert.strictEqual(session.todos.length, 1);
+    assert.strictEqual(session.messages.length, 2);
+    assert.strictEqual(session.messages[0].role, 'system');
+    assert.strictEqual(session.messages[1].role, 'user');
+    assert.strictEqual(session.todos[0].content, 'Chat session todo');
+});
+
+test('LLMClient - Tool execution: should execute read_lints', { skip: process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' }, async () => {
     const client = new LLMClient();
     const result = await client.executeReadLints({});
     
     assert.ok(Array.isArray(result.lints));
 });
 
-test('LLMClient - Tool execution: should execute web_search', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute web_search', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
     const client = new LLMClient();
     
     // Test that web_search handles missing API key gracefully
@@ -788,7 +882,7 @@ test('LLMClient - Tool execution: should execute web_search', { skip: process.en
     }
 });
 
-test('LLMClient - Tool execution: should reject empty search_term in web_search', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should reject empty search_term in web_search', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
     const client = new LLMClient();
     
     await assert.rejects(
@@ -801,7 +895,7 @@ test('LLMClient - Tool execution: should reject empty search_term in web_search'
     );
 });
 
-test('LLMClient - Tool execution: should execute live web_search with DuckDuckGo (fallback test)', { skip: process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute live web_search with DuckDuckGo (fallback test)', { skip: process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_LINTS_ONLY === '1' }, async () => {
     const fs = require('fs');
     const path = require('path');
     const braveKeyPath = path.join(__dirname, '.brave-api-key');
@@ -902,7 +996,7 @@ test('LLMClient - Tool execution: should execute live web_search with DuckDuckGo
     assert.ok(firstResult.url.length > 0, 'URL should not be empty');
 });
 
-test('LLMClient - Tool execution: should handle web_search with specific query', { skip: process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1' || process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should handle web_search with specific query', { skip: process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_LINTS_ONLY === '1' }, async () => {
     const client = new LLMClient();
     
     // Test with a specific, well-known search term
@@ -947,7 +1041,7 @@ test('LLMClient - Tool execution: should handle web_search with specific query',
     assert.ok(result.results.length >= 1, 'Should have at least one result');
 });
 
-test('LLMClient - Tool execution: should respect count parameter in web_search', { skip: process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1' || process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should respect count parameter in web_search', { skip: process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_LINTS_ONLY === '1' }, async () => {
     const client = new LLMClient();
     
     // Test with specific count
@@ -963,7 +1057,7 @@ test('LLMClient - Tool execution: should respect count parameter in web_search',
     assert.ok(result.results.length > 0, 'Should return at least one result');
 });
 
-test('LLMClient - Tool execution: should use default count of 10 in web_search', { skip: process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1' || process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should use default count of 10 in web_search', { skip: process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_LINTS_ONLY === '1' }, async () => {
     const client = new LLMClient();
     
     // Test without count parameter (should default to 10)
@@ -978,7 +1072,7 @@ test('LLMClient - Tool execution: should use default count of 10 in web_search',
     assert.ok(result.results.length <= 10, `Should return at most 10 results, got ${result.results.length}`);
 });
 
-test('LLMClient - Tool execution: should fetch and summarize first 5 URLs in web_search', { skip: process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1' || process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should fetch and summarize first 5 URLs in web_search', { skip: process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_LINTS_ONLY === '1' }, async () => {
     const client = new LLMClient();
     const verbose = process.env.TEST_VERBOSE === '1' || process.env.TEST_VERBOSE === 'true';
     
@@ -1036,7 +1130,7 @@ test('LLMClient - Tool execution: should fetch and summarize first 5 URLs in web
     assert.ok(resultsWithSummaries.length >= 0, 'Summaries may be present');
 });
 
-test('LLMClient - Tool execution: should work with Brave search when API key is available', { skip: process.env.TEST_DUCKDUCKGO_ONLY === '1' || process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should work with Brave search when API key is available', { skip: process.env.TEST_DUCKDUCKGO_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || process.env.TEST_LINTS_ONLY === '1' }, async () => {
     const fs = require('fs');
     const path = require('path');
     const braveKeyPath = path.join(__dirname, '.brave-api-key');
@@ -1082,7 +1176,7 @@ test('LLMClient - Tool execution: should work with Brave search when API key is 
     assert.ok(result.results.length > 0, 'Should return at least one result');
 });
 
-test('LLMClient - Tool execution: should handle delete_file for non-existent file gracefully', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should handle delete_file for non-existent file gracefully', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
     const client = new LLMClient({ mode: 'agent' });
     
     const result = await client.executeDeleteFile({
@@ -1093,7 +1187,7 @@ test('LLMClient - Tool execution: should handle delete_file for non-existent fil
     assert.ok(result.message);
 });
 
-test('LLMClient - Tool execution: should execute list_dir with ignore_globs', { skip: process.env.TEST_LINTS_ONLY === '1' }, async () => {
+test('LLMClient - Tool execution: should execute list_dir with ignore_globs', { skip: process.env.TEST_LINTS_ONLY === '1' || process.env.TEST_TODO_ONLY === '1' || (process.env.TEST_TODO_ONLY !== '1' && (process.env.TEST_BRAVE_ONLY === '1' || process.env.TEST_DUCKDUCKGO_ONLY === '1')) }, async () => {
     const client = new LLMClient();
     
     // Test that ignore_globs parameter is accepted and doesn't crash

@@ -54,6 +54,33 @@ function readAPIKey(keyPath) {
 }
 
 /**
+ * ChatSession class - holds messages and todos for a chat session
+ */
+class ChatSession {
+    constructor(messages = []) {
+        this.messages = messages;
+        this.todos = [];
+    }
+        
+    /**
+     * Update todos in this session
+     */
+    updateTodos(newTodos, merge = false) {
+        if (merge) {
+            // Merge todos by id
+            const todoMap = new Map(this.todos.map(t => [t.id, t]));
+            for (const todo of newTodos) {
+                todoMap.set(todo.id, todo);
+            }
+            this.todos = Array.from(todoMap.values());
+        } else {
+            // Replace all todos
+            this.todos = newTodos;
+        }
+    }
+}
+
+/**
  * LLM Client class
  */
 class LLMClient extends EventEmitter {
@@ -82,6 +109,9 @@ class LLMClient extends EventEmitter {
         // Tool registry for execution
         this.toolRegistry = new Map();
         this.registerTools();
+        
+        // Current chat session (set by chat() function)
+        this.currentSession = null;
     }
 
     /**
@@ -3565,6 +3595,7 @@ Summary:`;
 
     /**
      * Execute todo_write tool
+     * Todos are stored in the current chat session (tied to the messages passed to chat())
      */
     async executeTodoWrite(args) {
         const toolName = 'todo_write';
@@ -3587,35 +3618,19 @@ Summary:`;
                 }
             }
             
-            const todoFile = path.join(__dirname, '.todos.json');
-            
-            // Load existing todos
-            let existingTodos = [];
-            if (merge && fs.existsSync(todoFile)) {
-                try {
-                    const content = fs.readFileSync(todoFile, 'utf8');
-                    existingTodos = JSON.parse(content);
-                } catch (e) {
-                    existingTodos = [];
-                }
+            // Use current session if available, otherwise create a default session
+            if (!this.currentSession) {
+                // Create a default session for direct tool calls (not from chat)
+                this.currentSession = new ChatSession([]);
             }
             
-            if (merge) {
-                // Merge todos by id
-                const todoMap = new Map(existingTodos.map(t => [t.id, t]));
-                for (const todo of todos) {
-                    todoMap.set(todo.id, todo);
-                }
-                existingTodos = Array.from(todoMap.values());
-            } else {
-                // Replace all todos
-                existingTodos = todos;
-            }
+            // Update todos in the current session
+            this.currentSession.updateTodos(todos, merge);
             
-            // Save todos
-            fs.writeFileSync(todoFile, JSON.stringify(existingTodos, null, 2), 'utf8');
-            
-            const result = { success: true, count: existingTodos.length };
+            const result = { 
+                success: true, 
+                count: this.currentSession.todos.length
+            };
             this.emit('tool:complete', { toolName, args, result });
             return result;
         } catch (error) {
@@ -4071,14 +4086,14 @@ Summary:`;
     /**
      * Process LLM response and execute tool calls
      */
-    async processResponse(response, conversationHistory = []) {
+    async processResponse(response, messages = []) {
         const choice = response.choices?.[0];
         if (!choice) {
             throw new Error('Invalid response format from LLM API');
         }
 
         const message = choice.message;
-        conversationHistory.push(message);
+        messages.push(message);
 
         // Check for tool calls
         if (message.tool_calls && message.tool_calls.length > 0) {
@@ -4114,15 +4129,15 @@ Summary:`;
             }
 
             // Add tool results to conversation
-            conversationHistory.push(...toolResults);
+            messages.push(...toolResults);
 
             // Continue conversation with tool results
-            return await this.continueConversation(conversationHistory);
+            return await this.continueConversation(messages);
         }
 
         return {
             content: message.content,
-            conversationHistory
+            messages: messages
         };
     }
 
@@ -4136,11 +4151,18 @@ Summary:`;
 
     /**
      * Chat with LLM (main entry point)
+     * @param {ChatSession} session - ChatSession containing messages and todos
+     * @param {string} message - New user message to add
+     * @param {Object} options - Additional options
      */
-    async chat(messages, message, options = {}) {
-        if (!messages) {
-            messages = [];
+    async chat(session, message, options = {}) {
+        if (!(session instanceof ChatSession)) {
+            throw new Error('session parameter is required and must be a ChatSession instance');
         }
+        
+        // Get messages from session
+        let messages = session.messages || [];
+        
         // If the first message is not a system prompt, prepend the appropriate one
         if (messages.length === 0 || messages[0].role !== 'system') {
             messages.unshift({
@@ -4148,23 +4170,36 @@ Summary:`;
                 content: this.systemPrompt
             });
         }
+        
+        // Set current session for tool execution
+        this.currentSession = session;
+        
+        // Add new user message
         messages.push({ role: 'user', content: message });
         if (this.mode === "ask") {
             messages[messages.length - 1].content += `\n\n${this.readonlyPrompt}`;
         }
+        
+        // Update session messages
+        session.messages = messages;
+        
         let iteration = 0;
 
         while (iteration < this.maxIterations) {
             const response = await this.callLLM(this.model, messages, options);
             const result = await this.processResponse(response, messages);
             
-            messages = result.conversationHistory;
+            // Update messages from result
+            messages = result.messages || messages;
+            
+            // Update session messages
+            session.messages = messages;
 
             // If no tool calls were made, return the final response
             if (result.content) {
                 return {
                     content: result.content,
-                    conversationHistory: result.conversationHistory
+                    session: session
                 };
             }
 
@@ -4188,3 +4223,4 @@ Summary:`;
 
 module.exports = LLMClient;
 
+module.exports.ChatSession = ChatSession;
