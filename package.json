@@ -20,6 +20,9 @@
     "self-evolving"
   ],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "eslint": "^9.0.0"
+  }
 }
 

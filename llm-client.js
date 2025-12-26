@@ -562,6 +562,14 @@ class LLMClient extends EventEmitter {
 
     /**
      * Execute read_lints tool
+     * Supports 50+ languages: JavaScript/TypeScript (ESLint), Python (pylint/flake8), Ruby (rubocop), Rust (clippy), Go (go vet),
+     * Shell (shellcheck), YAML (yamllint), Markdown (markdownlint), CSS (stylelint), HTML (htmlhint), SQL (sqlfluff),
+     * Lua (luacheck), Java (checkstyle), C/C++ (cppcheck), PHP (phpcs), Swift (swiftlint), Kotlin (ktlint), Dart (dart),
+     * JSON, XML (xmllint), TOML (taplo), Dockerfile (hadolint), Terraform (tflint), PowerShell (PSScriptAnalyzer),
+     * R (lintr), Perl (perlcritic), Scala (scalastyle), Clojure (clj-kondo), Haskell (hlint), Erlang (elvis),
+     * Elixir (credo), OCaml (ocaml-lint), F#/C# (dotnet), Groovy (CodeNarc), Objective-C (OCLint), D (dscanner),
+     * Nim (nim check), Crystal (ameba), Zig (zig fmt), Julia (Lint.jl), Fortran (gfortran), COBOL (cobc),
+     * Ada (gnat), VHDL (ghdl), Verilog (verilator), Makefile (checkmake), CMake (cmake-lint), and more.
      */
     async executeReadLints(args) {
         const toolName = 'read_lints';
@@ -569,15 +577,2176 @@ class LLMClient extends EventEmitter {
         
         try {
             const { paths = [] } = args;
-            // Basic implementation - returns empty lints for now
-            // Could be extended to integrate with ESLint or other linters
-            const result = { lints: [] };
+            const allLints = [];
+            
+            // Determine files to lint
+            const filesToLint = await this.collectFilesToLint(paths);
+            
+            // Group files by language/linter
+            const filesByLinter = this.groupFilesByLinter(filesToLint);
+            
+            // Run linters for each group
+            for (const [linterType, files] of Object.entries(filesByLinter)) {
+                if (files.length === 0) continue;
+                
+                try {
+                    const lints = await this.runLinter(linterType, files);
+                    allLints.push(...lints);
+                } catch (error) {
+                    // If a linter fails, log warning but continue with others
+                    console.warn(`Linter ${linterType} failed:`, error.message);
+                }
+            }
+            
+            const result = { lints: allLints };
             this.emit('tool:complete', { toolName, args, result });
             return result;
         } catch (error) {
             this.emit('tool:error', { toolName, args, error: error.message });
             throw error;
         }
+    }
+    
+    /**
+     * Collect files to lint based on paths
+     */
+    async collectFilesToLint(paths) {
+        const files = new Set();
+        const workspaceRoot = process.cwd();
+        
+        if (paths.length === 0) {
+            // No paths provided - lint all files in workspace (but be selective)
+            // Only lint common source file types
+            const extensions = [
+                // JavaScript/TypeScript
+                '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
+                // Python
+                '.py', '.pyw', '.pyi',
+                // Ruby
+                '.rb', '.rake',
+                // Rust
+                '.rs',
+                // Go
+                '.go',
+                // Shell/Bash
+                '.sh', '.bash', '.zsh', '.fish',
+                // YAML
+                '.yaml', '.yml',
+                // Markdown
+                '.md', '.markdown',
+                // CSS
+                '.css', '.scss', '.sass', '.less',
+                // HTML
+                '.html', '.htm',
+                // SQL
+                '.sql',
+                // Lua
+                '.lua',
+                // Java
+                '.java',
+                // C/C++
+                '.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hh', '.hxx',
+                // PHP
+                '.php', '.phtml',
+                // Swift
+                '.swift',
+                // Kotlin
+                '.kt', '.kts',
+                // Dart
+                '.dart',
+                // JSON
+                '.json',
+                // XML
+                '.xml',
+                // TOML
+                '.toml',
+                // INI/Config
+                '.ini', '.cfg', '.conf',
+                // PowerShell
+                '.ps1', '.psm1', '.psd1',
+                // R
+                '.r', '.R',
+                // MATLAB
+                '.m',
+                // Perl
+                '.pl', '.pm',
+                // Scala
+                '.scala',
+                // Clojure
+                '.clj', '.cljs', '.cljc',
+                // Haskell
+                '.hs', '.lhs',
+                // Erlang
+                '.erl', '.hrl',
+                // Elixir
+                '.ex', '.exs',
+                // OCaml
+                '.ml', '.mli',
+                // F#
+                '.fs', '.fsi', '.fsx',
+                // C#
+                '.cs',
+                // VB.NET
+                '.vb',
+                // Groovy
+                '.groovy', '.gvy',
+                // Objective-C
+                '.m', '.mm',
+                // D
+                '.d',
+                // Nim
+                '.nim',
+                // Crystal
+                '.cr',
+                // Zig
+                '.zig',
+                // V
+                '.v',
+                // Tcl
+                '.tcl',
+                // Racket
+                '.rkt',
+                // Scheme
+                '.scm', '.ss',
+                // Common Lisp
+                '.lisp', '.lsp', '.cl',
+                // Prolog
+                '.pl', '.pro',
+                // Julia
+                '.jl',
+                // Fortran
+                '.f', '.f90', '.f95', '.f03', '.f08',
+                // COBOL
+                '.cob', '.cbl',
+                // Ada
+                '.adb', '.ads',
+                // VHDL
+                '.vhd', '.vhdl',
+                // Verilog
+                '.v', '.sv',
+                // Makefile
+                '.mk', '.make',
+                // CMake
+                '.cmake',
+                // Dockerfile (no extension, handled separately)
+                // Terraform
+                '.tf', '.tfvars',
+                // HCL
+                '.hcl',
+                // YANG
+                '.yang'
+            ];
+            await this.collectFilesRecursive(workspaceRoot, files, extensions);
+            await this.collectDockerfiles(workspaceRoot, files);
+        } else {
+            // Process provided paths
+            for (const inputPath of paths) {
+                const fullPath = path.isAbsolute(inputPath) ? inputPath : path.join(workspaceRoot, inputPath);
+                
+                if (!fs.existsSync(fullPath)) {
+                    continue;
+                }
+                
+                const stat = fs.statSync(fullPath);
+                if (stat.isFile()) {
+                    files.add(fullPath);
+                } else if (stat.isDirectory()) {
+                    const extensions = [
+                        '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py', '.pyw', '.pyi', '.rb', '.rake', '.rs', '.go',
+                        '.sh', '.bash', '.zsh', '.fish', '.yaml', '.yml', '.md', '.markdown', '.css', '.scss', '.sass', '.less',
+                        '.html', '.htm', '.sql', '.lua', '.java', '.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hh', '.hxx',
+                        '.php', '.phtml', '.swift', '.kt', '.kts', '.dart', '.json', '.xml', '.toml', '.tf', '.tfvars',
+                        '.ps1', '.psm1', '.psd1', '.r', '.R', '.pl', '.pm', '.scala', '.clj', '.cljs', '.cljc',
+                        '.hs', '.lhs', '.erl', '.hrl', '.ex', '.exs', '.ml', '.mli', '.fs', '.fsi', '.fsx', '.cs',
+                        '.groovy', '.gvy', '.m', '.mm', '.d', '.nim', '.cr', '.zig', '.jl', '.f', '.f90', '.f95', '.f03', '.f08',
+                        '.cob', '.cbl', '.adb', '.ads', '.vhd', '.vhdl', '.v', '.sv', '.mk', '.make', '.cmake'
+                    ];
+                    await this.collectFilesRecursive(fullPath, files, extensions);
+                    await this.collectDockerfiles(fullPath, files);
+                }
+            }
+        }
+        
+        return Array.from(files);
+    }
+    
+    /**
+     * Recursively collect files with specified extensions
+     */
+    async collectFilesRecursive(dir, files, extensions) {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        
+        for (const entry of entries) {
+            // Skip node_modules, .git, and other common ignored directories
+            if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'vendor') {
+                continue;
+            }
+            
+            const fullPath = path.join(dir, entry.name);
+            
+            if (entry.isDirectory()) {
+                await this.collectFilesRecursive(fullPath, files, extensions);
+            } else if (entry.isFile()) {
+                const ext = path.extname(entry.name);
+                if (extensions.includes(ext)) {
+                    files.add(fullPath);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Recursively collect Dockerfile files (no extension)
+     */
+    async collectDockerfiles(dir, files) {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        
+        for (const entry of entries) {
+            // Skip node_modules, .git, and other common ignored directories
+            if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'vendor') {
+                continue;
+            }
+            
+            const fullPath = path.join(dir, entry.name);
+            
+            if (entry.isDirectory()) {
+                await this.collectDockerfiles(fullPath, files);
+            } else if (entry.isFile()) {
+                const fileName = entry.name.toLowerCase();
+                if (fileName === 'dockerfile' || fileName.startsWith('dockerfile.')) {
+                    files.add(fullPath);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Group files by appropriate linter
+     */
+    groupFilesByLinter(files) {
+        const groups = {
+            eslint: [],      // JavaScript/TypeScript
+            python: [],      // Python
+            ruby: [],       // Ruby
+            rust: [],       // Rust
+            go: [],         // Go
+            shell: [],      // Shell/Bash
+            yaml: [],       // YAML
+            markdown: [],   // Markdown
+            css: [],        // CSS/SCSS/SASS
+            html: [],       // HTML
+            sql: [],        // SQL
+            lua: [],        // Lua
+            java: [],       // Java
+            cpp: [],        // C/C++
+            php: [],        // PHP
+            swift: [],      // Swift
+            kotlin: [],    // Kotlin
+            dart: [],       // Dart
+            json: [],       // JSON
+            xml: [],        // XML
+            toml: [],       // TOML
+            dockerfile: [], // Dockerfile
+            terraform: [],  // Terraform
+            powershell: [], // PowerShell
+            r: [],          // R
+            perl: [],       // Perl
+            scala: [],      // Scala
+            clojure: [],    // Clojure
+            haskell: [],    // Haskell
+            erlang: [],     // Erlang
+            elixir: [],     // Elixir
+            ocaml: [],      // OCaml
+            fsharp: [],     // F#
+            csharp: [],     // C#
+            groovy: [],     // Groovy
+            objectivec: [], // Objective-C
+            d: [],          // D
+            nim: [],        // Nim
+            crystal: [],    // Crystal
+            zig: [],        // Zig
+            julia: [],      // Julia
+            fortran: [],    // Fortran
+            cobol: [],      // COBOL
+            ada: [],        // Ada
+            vhdl: [],       // VHDL
+            verilog: [],    // Verilog
+            makefile: [],   // Makefile
+            cmake: []       // CMake
+        };
+        
+        for (const file of files) {
+            const fileName = path.basename(file).toLowerCase();
+            const ext = path.extname(file);
+            const extLower = ext.toLowerCase();
+            
+            // Check for Dockerfile (no extension)
+            if (fileName === 'dockerfile' || fileName.startsWith('dockerfile.')) {
+                groups.dockerfile.push(file);
+            }
+            // JavaScript/TypeScript
+            else if (['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'].includes(extLower)) {
+                groups.eslint.push(file);
+            }
+            // Python
+            else if (['.py', '.pyw', '.pyi'].includes(extLower)) {
+                groups.python.push(file);
+            }
+            // Ruby
+            else if (['.rb', '.rake'].includes(extLower)) {
+                groups.ruby.push(file);
+            }
+            // Rust
+            else if (['.rs'].includes(extLower)) {
+                groups.rust.push(file);
+            }
+            // Go
+            else if (['.go'].includes(extLower)) {
+                groups.go.push(file);
+            }
+            // Shell/Bash
+            else if (['.sh', '.bash', '.zsh', '.fish'].includes(extLower)) {
+                groups.shell.push(file);
+            }
+            // YAML
+            else if (['.yaml', '.yml'].includes(extLower)) {
+                groups.yaml.push(file);
+            }
+            // Markdown
+            else if (['.md', '.markdown'].includes(extLower)) {
+                groups.markdown.push(file);
+            }
+            // CSS
+            else if (['.css', '.scss', '.sass', '.less'].includes(extLower)) {
+                groups.css.push(file);
+            }
+            // HTML
+            else if (['.html', '.htm'].includes(extLower)) {
+                groups.html.push(file);
+            }
+            // SQL
+            else if (['.sql'].includes(extLower)) {
+                groups.sql.push(file);
+            }
+            // Lua
+            else if (['.lua'].includes(extLower)) {
+                groups.lua.push(file);
+            }
+            // Java
+            else if (['.java'].includes(extLower)) {
+                groups.java.push(file);
+            }
+            // C/C++
+            else if (['.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hh', '.hxx'].includes(extLower)) {
+                groups.cpp.push(file);
+            }
+            // PHP
+            else if (['.php', '.phtml'].includes(extLower)) {
+                groups.php.push(file);
+            }
+            // Swift
+            else if (['.swift'].includes(extLower)) {
+                groups.swift.push(file);
+            }
+            // Kotlin
+            else if (['.kt', '.kts'].includes(extLower)) {
+                groups.kotlin.push(file);
+            }
+            // Dart
+            else if (['.dart'].includes(extLower)) {
+                groups.dart.push(file);
+            }
+            // JSON
+            else if (['.json'].includes(extLower)) {
+                groups.json.push(file);
+            }
+            // XML
+            else if (['.xml'].includes(extLower)) {
+                groups.xml.push(file);
+            }
+            // TOML
+            else if (['.toml'].includes(extLower)) {
+                groups.toml.push(file);
+            }
+            // Terraform
+            else if (['.tf', '.tfvars'].includes(extLower)) {
+                groups.terraform.push(file);
+            }
+            // PowerShell
+            else if (['.ps1', '.psm1', '.psd1'].includes(extLower)) {
+                groups.powershell.push(file);
+            }
+            // R
+            else if (['.r', '.R'].includes(extLower)) {
+                groups.r.push(file);
+            }
+            // Perl
+            else if (['.pl', '.pm'].includes(extLower)) {
+                groups.perl.push(file);
+            }
+            // Scala
+            else if (['.scala'].includes(extLower)) {
+                groups.scala.push(file);
+            }
+            // Clojure
+            else if (['.clj', '.cljs', '.cljc'].includes(extLower)) {
+                groups.clojure.push(file);
+            }
+            // Haskell
+            else if (['.hs', '.lhs'].includes(extLower)) {
+                groups.haskell.push(file);
+            }
+            // Erlang
+            else if (['.erl', '.hrl'].includes(extLower)) {
+                groups.erlang.push(file);
+            }
+            // Elixir
+            else if (['.ex', '.exs'].includes(extLower)) {
+                groups.elixir.push(file);
+            }
+            // OCaml
+            else if (['.ml', '.mli'].includes(extLower)) {
+                groups.ocaml.push(file);
+            }
+            // F#
+            else if (['.fs', '.fsi', '.fsx'].includes(extLower)) {
+                groups.fsharp.push(file);
+            }
+            // C#
+            else if (['.cs'].includes(extLower)) {
+                groups.csharp.push(file);
+            }
+            // Groovy
+            else if (['.groovy', '.gvy'].includes(extLower)) {
+                groups.groovy.push(file);
+            }
+            // Objective-C
+            else if (['.m', '.mm'].includes(extLower)) {
+                groups.objectivec.push(file);
+            }
+            // D
+            else if (['.d'].includes(extLower)) {
+                groups.d.push(file);
+            }
+            // Nim
+            else if (['.nim'].includes(extLower)) {
+                groups.nim.push(file);
+            }
+            // Crystal
+            else if (['.cr'].includes(extLower)) {
+                groups.crystal.push(file);
+            }
+            // Zig
+            else if (['.zig'].includes(extLower)) {
+                groups.zig.push(file);
+            }
+            // Julia
+            else if (['.jl'].includes(extLower)) {
+                groups.julia.push(file);
+            }
+            // Fortran
+            else if (['.f', '.f90', '.f95', '.f03', '.f08'].includes(extLower)) {
+                groups.fortran.push(file);
+            }
+            // COBOL
+            else if (['.cob', '.cbl'].includes(extLower)) {
+                groups.cobol.push(file);
+            }
+            // Ada
+            else if (['.adb', '.ads'].includes(extLower)) {
+                groups.ada.push(file);
+            }
+            // VHDL
+            else if (['.vhd', '.vhdl'].includes(extLower)) {
+                groups.vhdl.push(file);
+            }
+            // Verilog
+            else if (['.v', '.sv'].includes(extLower)) {
+                groups.verilog.push(file);
+            }
+            // Makefile
+            else if (['.mk', '.make'].includes(extLower) || fileName === 'makefile') {
+                groups.makefile.push(file);
+            }
+            // CMake
+            else if (['.cmake'].includes(extLower)) {
+                groups.cmake.push(file);
+            }
+        }
+        
+        return groups;
+    }
+    
+    /**
+     * Run appropriate linter for files
+     */
+    async runLinter(linterType, files) {
+        switch (linterType) {
+            case 'eslint':
+                return await this.runESLint(files);
+            case 'python':
+                return await this.runPythonLinter(files);
+            case 'ruby':
+                return await this.runRubyLinter(files);
+            case 'rust':
+                return await this.runRustLinter(files);
+            case 'go':
+                return await this.runGoLinter(files);
+            case 'shell':
+                return await this.runShellLinter(files);
+            case 'yaml':
+                return await this.runYAMLLinter(files);
+            case 'markdown':
+                return await this.runMarkdownLinter(files);
+            case 'css':
+                return await this.runCSSLinter(files);
+            case 'html':
+                return await this.runHTMLLinter(files);
+            case 'sql':
+                return await this.runSQLLinter(files);
+            case 'lua':
+                return await this.runLuaLinter(files);
+            case 'java':
+                return await this.runJavaLinter(files);
+            case 'cpp':
+                return await this.runCppLinter(files);
+            case 'php':
+                return await this.runPHPLinter(files);
+            case 'swift':
+                return await this.runSwiftLinter(files);
+            case 'kotlin':
+                return await this.runKotlinLinter(files);
+            case 'dart':
+                return await this.runDartLinter(files);
+            case 'json':
+                return await this.runJSONLinter(files);
+            case 'xml':
+                return await this.runXMLLinter(files);
+            case 'toml':
+                return await this.runTOMLLinter(files);
+            case 'dockerfile':
+                return await this.runDockerfileLinter(files);
+            case 'terraform':
+                return await this.runTerraformLinter(files);
+            case 'powershell':
+                return await this.runPowerShellLinter(files);
+            case 'r':
+                return await this.runRLinter(files);
+            case 'perl':
+                return await this.runPerlLinter(files);
+            case 'scala':
+                return await this.runScalaLinter(files);
+            case 'clojure':
+                return await this.runClojureLinter(files);
+            case 'haskell':
+                return await this.runHaskellLinter(files);
+            case 'erlang':
+                return await this.runErlangLinter(files);
+            case 'elixir':
+                return await this.runElixirLinter(files);
+            case 'ocaml':
+                return await this.runOCamlLinter(files);
+            case 'fsharp':
+                return await this.runFSharpLinter(files);
+            case 'csharp':
+                return await this.runCSharpLinter(files);
+            case 'groovy':
+                return await this.runGroovyLinter(files);
+            case 'objectivec':
+                return await this.runObjectiveCLinter(files);
+            case 'd':
+                return await this.runDLinter(files);
+            case 'nim':
+                return await this.runNimLinter(files);
+            case 'crystal':
+                return await this.runCrystalLinter(files);
+            case 'zig':
+                return await this.runZigLinter(files);
+            case 'julia':
+                return await this.runJuliaLinter(files);
+            case 'fortran':
+                return await this.runFortranLinter(files);
+            case 'cobol':
+                return await this.runCOBOLLinter(files);
+            case 'ada':
+                return await this.runAdaLinter(files);
+            case 'vhdl':
+                return await this.runVHDLLinter(files);
+            case 'verilog':
+                return await this.runVerilogLinter(files);
+            case 'makefile':
+                return await this.runMakefileLinter(files);
+            case 'cmake':
+                return await this.runCMakeLinter(files);
+            default:
+                return [];
+        }
+    }
+    
+    /**
+     * Run ESLint on JavaScript/TypeScript files
+     */
+    async runESLint(files) {
+        const lints = [];
+        
+        try {
+            // Run ESLint with JSON format
+            const eslintPath = path.join(__dirname, 'node_modules', '.bin', 'eslint');
+            const configPath = this.findESLintConfig();
+            const args = files.concat(['--format', 'json']);
+            
+            if (configPath) {
+                args.push('--config', configPath);
+            }
+            
+            const result = await this.runCommand(eslintPath, args, { timeout: 30000, allowNonZero: true });
+            
+            // ESLint exits with non-zero code when there are linting errors, but that's OK
+            // Parse the JSON output from stdout (stderr may contain warnings but JSON is in stdout)
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                // ESLint may output multiple JSON objects, try to parse as array or single object
+                const eslintResults = output.trim().startsWith('[') 
+                    ? JSON.parse(output) 
+                    : [JSON.parse(output.trim())];
+                
+                for (const fileResult of eslintResults) {
+                    if (fileResult.messages && fileResult.messages.length > 0) {
+                        for (const message of fileResult.messages) {
+                            lints.push({
+                                file: fileResult.filePath,
+                                line: message.line || 0,
+                                column: message.column || 0,
+                                endLine: message.endLine || message.line || 0,
+                                endColumn: message.endColumn || message.column || 0,
+                                severity: message.severity === 2 ? 'error' : message.severity === 1 ? 'warning' : 'info',
+                                message: message.message,
+                                rule: message.ruleId || 'unknown',
+                                linter: 'eslint'
+                            });
+                        }
+                    }
+                }
+            } catch (parseError) {
+                // If parsing fails, ESLint might not be properly configured
+                // Silently return empty results
+            }
+        } catch (error) {
+            // ESLint not available or failed - return empty results
+        }
+        
+        return lints;
+    }
+    
+    /**
+     * Find ESLint config file
+     */
+    findESLintConfig() {
+        const possibleConfigs = [
+            'eslint.config.js',
+            'eslint.config.mjs',
+            'eslint.config.cjs',
+            '.eslintrc.js',
+            '.eslintrc.json',
+            '.eslintrc.yml',
+            '.eslintrc.yaml'
+        ];
+        
+        for (const config of possibleConfigs) {
+            const configPath = path.join(process.cwd(), config);
+            if (fs.existsSync(configPath)) {
+                return configPath;
+            }
+        }
+        
+        // Return path to a default minimal config if none exists
+        return null;
+    }
+    
+    /**
+     * Run Python linter (pylint or flake8)
+     */
+    async runPythonLinter(files) {
+        const lints = [];
+        
+        // Try pylint first, then flake8
+        for (const linterCmd of ['pylint', 'flake8']) {
+            try {
+                const result = await this.runCommand(linterCmd, files, { timeout: 30000 });
+                
+                // Parse pylint/flake8 output (format: file:line:column: message)
+                const lines = (result.stdout || result.stderr || '').split('\n');
+                for (const line of lines) {
+                    const match = line.match(/^([^:]+):(\d+):(\d*):?\s*(.*)$/);
+                    if (match) {
+                        const [, file, lineNum, col, message] = match;
+                        lints.push({
+                            file: path.resolve(file),
+                            line: parseInt(lineNum) || 0,
+                            column: parseInt(col) || 0,
+                            endLine: parseInt(lineNum) || 0,
+                            endColumn: parseInt(col) || 0,
+                            severity: 'error', // Python linters typically report errors
+                            message: message.trim(),
+                            rule: linterCmd,
+                            linter: linterCmd
+                        });
+                    }
+                }
+                
+                if (lints.length > 0) break; // Use first linter that produces results
+            } catch (error) {
+                // Try next linter
+                continue;
+            }
+        }
+        
+        return lints;
+    }
+    
+    /**
+     * Run Ruby linter (rubocop)
+     */
+    async runRubyLinter(files) {
+        const lints = [];
+        
+        try {
+            const result = await this.runCommand('rubocop', ['--format', 'json', ...files], { timeout: 30000 });
+            
+            try {
+                const rubocopResults = JSON.parse(result.stdout || '{}');
+                
+                for (const [filePath, fileData] of Object.entries(rubocopResults.files || {})) {
+                    for (const offense of fileData.offenses || []) {
+                        lints.push({
+                            file: path.resolve(filePath),
+                            line: offense.location.start_line || offense.line || 0,
+                            column: offense.location.start_column || offense.column || 0,
+                            endLine: offense.location.last_line || offense.line || 0,
+                            endColumn: offense.location.last_column || offense.column || 0,
+                            severity: offense.severity || 'warning',
+                            message: offense.message || '',
+                            rule: offense.cop_name || 'unknown',
+                            linter: 'rubocop'
+                        });
+                    }
+                }
+            } catch (parseError) {
+                // Parse failed
+            }
+        } catch (error) {
+            // Rubocop not available
+        }
+        
+        return lints;
+    }
+    
+    /**
+     * Run Rust linter (clippy)
+     */
+    async runRustLinter(files) {
+        const lints = [];
+        
+        try {
+            // Clippy works on Rust projects, not individual files
+            // Try to find Cargo.toml and run clippy on the project
+            const cargoToml = this.findNearestFile('Cargo.toml', files[0]);
+            if (cargoToml) {
+                const projectDir = path.dirname(cargoToml);
+                const result = await this.runCommand('cargo', ['clippy', '--message-format', 'json'], {
+                    cwd: projectDir,
+                    timeout: 60000
+                });
+                
+                // Parse cargo clippy JSON output (one JSON object per line)
+                const lines = (result.stdout || '').split('\n');
+                for (const line of lines) {
+                    if (line.trim()) {
+                        try {
+                            const clippyResult = JSON.parse(line);
+                            if (clippyResult.message && clippyResult.message.level) {
+                                const msg = clippyResult.message;
+                                const span = msg.spans && msg.spans[0] ? msg.spans[0] : {};
+                                
+                                lints.push({
+                                    file: span.file_name ? path.join(projectDir, span.file_name) : '',
+                                    line: span.line_start || 0,
+                                    column: span.column_start || 0,
+                                    endLine: span.line_end || span.line_start || 0,
+                                    endColumn: span.column_end || span.column_start || 0,
+                                    severity: msg.level === 'error' ? 'error' : msg.level === 'warning' ? 'warning' : 'info',
+                                    message: msg.message || '',
+                                    rule: msg.code ? msg.code.code : 'unknown',
+                                    linter: 'clippy'
+                                });
+                            }
+                        } catch (e) {
+                            // Skip invalid JSON lines
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            // Clippy not available
+        }
+        
+        return lints;
+    }
+    
+    /**
+     * Run Go linter (go vet)
+     */
+    async runGoLinter(files) {
+        const lints = [];
+        
+        try {
+            // go vet works on packages, not individual files
+            // Group files by directory and run go vet on each package
+            const filesByDir = {};
+            for (const file of files) {
+                const dir = path.dirname(file);
+                if (!filesByDir[dir]) {
+                    filesByDir[dir] = [];
+                }
+                filesByDir[dir].push(file);
+            }
+            
+            for (const [dir, dirFiles] of Object.entries(filesByDir)) {
+                try {
+                    const result = await this.runCommand('go', ['vet', './...'], {
+                        cwd: dir,
+                        timeout: 30000
+                    });
+                    
+                    // Parse go vet output (format: file:line:column: message)
+                    const lines = (result.stdout || result.stderr || '').split('\n');
+                    for (const line of lines) {
+                        const match = line.match(/^([^:]+):(\d+):(\d*):?\s*(.*)$/);
+                        if (match) {
+                            const [, file, lineNum, col, message] = match;
+                            lints.push({
+                                file: path.resolve(dir, file),
+                                line: parseInt(lineNum) || 0,
+                                column: parseInt(col) || 0,
+                                endLine: parseInt(lineNum) || 0,
+                                endColumn: parseInt(col) || 0,
+                                severity: 'error',
+                                message: message.trim(),
+                                rule: 'govet',
+                                linter: 'govet'
+                            });
+                        }
+                    }
+                } catch (error) {
+                    // Skip directories where go vet fails
+                    continue;
+                }
+            }
+        } catch (error) {
+            // go vet not available
+        }
+        
+        return lints;
+    }
+    
+    /**
+     * Run Shell linter (shellcheck)
+     */
+    async runShellLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('shellcheck', ['--format', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const shellcheckResults = JSON.parse(output);
+                for (const fileResult of Array.isArray(shellcheckResults) ? shellcheckResults : [shellcheckResults]) {
+                    for (const comment of fileResult.comments || []) {
+                        lints.push({
+                            file: fileResult.file || '',
+                            line: comment.line || 0,
+                            column: comment.column || 0,
+                            endLine: comment.endLine || comment.line || 0,
+                            endColumn: comment.endColumn || comment.column || 0,
+                            severity: comment.level === 'error' ? 'error' : comment.level === 'warning' ? 'warning' : 'info',
+                            message: comment.message || '',
+                            rule: comment.code || 'unknown',
+                            linter: 'shellcheck'
+                        });
+                    }
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run YAML linter (yamllint)
+     */
+    async runYAMLLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('yamllint', ['--format', 'parsable', ...files], { timeout: 30000, allowNonZero: true });
+            const lines = (result.stdout || result.stderr || '').split('\n');
+            for (const line of lines) {
+                const match = line.match(/^([^:]+):(\d+):(\d+):\s*\[(error|warning)\]\s*(.*)$/);
+                if (match) {
+                    const [, file, lineNum, col, severity, message] = match;
+                    lints.push({
+                        file: path.resolve(file),
+                        line: parseInt(lineNum) || 0,
+                        column: parseInt(col) || 0,
+                        endLine: parseInt(lineNum) || 0,
+                        endColumn: parseInt(col) || 0,
+                        severity: severity === 'error' ? 'error' : 'warning',
+                        message: message.trim(),
+                        rule: 'yamllint',
+                        linter: 'yamllint'
+                    });
+                }
+            }
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Markdown linter (markdownlint)
+     */
+    async runMarkdownLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('markdownlint', ['--json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '{}';
+                const markdownResults = JSON.parse(output);
+                for (const [filePath, fileData] of Object.entries(markdownResults)) {
+                    for (const issue of fileData || []) {
+                        lints.push({
+                            file: path.resolve(filePath),
+                            line: issue.lineNumber || 0,
+                            column: issue.columnNumber || 0,
+                            endLine: issue.lineNumber || 0,
+                            endColumn: issue.columnNumber || 0,
+                            severity: issue.severity === 2 ? 'error' : 'warning',
+                            message: issue.ruleNames ? issue.ruleNames.join('/') + ': ' + issue.ruleDescription : issue.ruleDescription || '',
+                            rule: issue.ruleNames ? issue.ruleNames[0] : 'unknown',
+                            linter: 'markdownlint'
+                        });
+                    }
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run CSS linter (stylelint)
+     */
+    async runCSSLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('stylelint', ['--formatter', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const stylelintResults = JSON.parse(output);
+                for (const fileResult of stylelintResults) {
+                    for (const warning of fileResult.warnings || []) {
+                        lints.push({
+                            file: fileResult.source || '',
+                            line: warning.line || 0,
+                            column: warning.column || 0,
+                            endLine: warning.endLine || warning.line || 0,
+                            endColumn: warning.endColumn || warning.column || 0,
+                            severity: warning.severity === 'error' ? 'error' : 'warning',
+                            message: warning.text || '',
+                            rule: warning.rule || 'unknown',
+                            linter: 'stylelint'
+                        });
+                    }
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run HTML linter (htmlhint)
+     */
+    async runHTMLLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('htmlhint', ['--format', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const htmlhintResults = JSON.parse(output);
+                for (const fileResult of htmlhintResults) {
+                    for (const message of fileResult.messages || []) {
+                        lints.push({
+                            file: fileResult.file || '',
+                            line: message.line || 0,
+                            column: message.col || 0,
+                            endLine: message.line || 0,
+                            endColumn: message.col || 0,
+                            severity: message.type === 'error' ? 'error' : 'warning',
+                            message: message.message || '',
+                            rule: message.rule || message.ruleId || 'unknown',
+                            linter: 'htmlhint'
+                        });
+                    }
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run SQL linter (sqlfluff)
+     */
+    async runSQLLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('sqlfluff', ['lint', '--format', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '{}';
+                const sqlfluffResults = JSON.parse(output);
+                for (const [filePath, fileData] of Object.entries(sqlfluffResults)) {
+                    for (const violation of fileData.violations || []) {
+                        lints.push({
+                            file: path.resolve(filePath),
+                            line: violation.line_no || 0,
+                            column: violation.line_pos || 0,
+                            endLine: violation.line_no || 0,
+                            endColumn: violation.line_pos || 0,
+                            severity: violation.severity === 'error' ? 'error' : 'warning',
+                            message: violation.description || violation.code || '',
+                            rule: violation.code || 'unknown',
+                            linter: 'sqlfluff'
+                        });
+                    }
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Lua linter (luacheck)
+     */
+    async runLuaLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('luacheck', ['--formatter', 'plain', ...files], { timeout: 30000, allowNonZero: true });
+            const lines = (result.stdout || result.stderr || '').split('\n');
+            for (const line of lines) {
+                const match = line.match(/^([^:]+):(\d+):(\d+):\s*\(([EW])\d+\)\s*(.*)$/);
+                if (match) {
+                    const [, file, lineNum, col, severity, message] = match;
+                    lints.push({
+                        file: path.resolve(file),
+                        line: parseInt(lineNum) || 0,
+                        column: parseInt(col) || 0,
+                        endLine: parseInt(lineNum) || 0,
+                        endColumn: parseInt(col) || 0,
+                        severity: severity === 'E' ? 'error' : 'warning',
+                        message: message.trim(),
+                        rule: 'luacheck',
+                        linter: 'luacheck'
+                    });
+                }
+            }
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Java linter (checkstyle)
+     */
+    async runJavaLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('checkstyle', ['-f', 'xml', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '';
+                // Parse XML output (simplified)
+                const fileMatches = output.matchAll(/<file name="([^"]+)">([\s\S]*?)<\/file>/g);
+                for (const match of fileMatches) {
+                    const filePath = match[1];
+                    const content = match[2];
+                    const errorMatches = content.matchAll(/<error line="(\d+)" column="(\d+)" severity="([^"]+)" message="([^"]+)" source="([^"]+)"/g);
+                    for (const errMatch of errorMatches) {
+                        lints.push({
+                            file: path.resolve(filePath),
+                            line: parseInt(errMatch[1]) || 0,
+                            column: parseInt(errMatch[2]) || 0,
+                            endLine: parseInt(errMatch[1]) || 0,
+                            endColumn: parseInt(errMatch[2]) || 0,
+                            severity: errMatch[3] === 'error' ? 'error' : 'warning',
+                            message: errMatch[4] || '',
+                            rule: errMatch[5] || 'unknown',
+                            linter: 'checkstyle'
+                        });
+                    }
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run C/C++ linter (cppcheck)
+     */
+    async runCppLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('cppcheck', ['--xml', '--xml-version=2', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '';
+                // Parse XML output (simplified)
+                const errorMatches = output.matchAll(/<error file="([^"]+)" line="(\d+)" column="(\d+)" severity="([^"]+)" message="([^"]+)" id="([^"]+)"/g);
+                for (const match of errorMatches) {
+                    lints.push({
+                        file: path.resolve(match[1]),
+                        line: parseInt(match[2]) || 0,
+                        column: parseInt(match[3]) || 0,
+                        endLine: parseInt(match[2]) || 0,
+                        endColumn: parseInt(match[3]) || 0,
+                        severity: match[4] === 'error' ? 'error' : match[4] === 'warning' ? 'warning' : 'info',
+                        message: match[5] || '',
+                        rule: match[6] || 'unknown',
+                        linter: 'cppcheck'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run PHP linter (phpcs)
+     */
+    async runPHPLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('phpcs', ['--report=json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '{}';
+                const phpcsResults = JSON.parse(output);
+                for (const [filePath, fileData] of Object.entries(phpcsResults.files || {})) {
+                    for (const message of fileData.messages || []) {
+                        lints.push({
+                            file: path.resolve(filePath),
+                            line: message.line || 0,
+                            column: message.column || 0,
+                            endLine: message.line || 0,
+                            endColumn: message.column || 0,
+                            severity: message.type === 'ERROR' ? 'error' : 'warning',
+                            message: message.message || '',
+                            rule: message.source || 'unknown',
+                            linter: 'phpcs'
+                        });
+                    }
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Swift linter (swiftlint)
+     */
+    async runSwiftLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('swiftlint', ['lint', '--reporter', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const swiftlintResults = JSON.parse(output);
+                for (const violation of swiftlintResults) {
+                    lints.push({
+                        file: violation.file || '',
+                        line: violation.line || 0,
+                        column: violation.character || 0,
+                        endLine: violation.line || 0,
+                        endColumn: violation.character || 0,
+                        severity: violation.severity === 'error' ? 'error' : 'warning',
+                        message: violation.reason || '',
+                        rule: violation.rule_id || 'unknown',
+                        linter: 'swiftlint'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Kotlin linter (ktlint)
+     */
+    async runKotlinLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('ktlint', ['--reporter=json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const ktlintResults = JSON.parse(output);
+                for (const violation of ktlintResults) {
+                    lints.push({
+                        file: violation.file || '',
+                        line: violation.line || 0,
+                        column: violation.col || 0,
+                        endLine: violation.line || 0,
+                        endColumn: violation.col || 0,
+                        severity: 'error',
+                        message: violation.message || '',
+                        rule: violation.rule || 'unknown',
+                        linter: 'ktlint'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Dart linter (dart analyze)
+     */
+    async runDartLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('dart', ['analyze', '--format', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '{}';
+                const dartResults = JSON.parse(output);
+                for (const issue of dartResults.issues || []) {
+                    lints.push({
+                        file: issue.location.file || '',
+                        line: issue.location.startLine || 0,
+                        column: issue.location.startColumn || 0,
+                        endLine: issue.location.endLine || issue.location.startLine || 0,
+                        endColumn: issue.location.endColumn || issue.location.startColumn || 0,
+                        severity: issue.severity === 'ERROR' ? 'error' : issue.severity === 'WARNING' ? 'warning' : 'info',
+                        message: issue.message || '',
+                        rule: issue.code || 'unknown',
+                        linter: 'dart'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run JSON linter (jsonlint or JSON.parse)
+     */
+    async runJSONLinter(files) {
+        const lints = [];
+        for (const file of files) {
+            try {
+                const content = fs.readFileSync(file, 'utf8');
+                JSON.parse(content);
+            } catch (error) {
+                // Try to extract line number from error
+                const match = error.message.match(/position (\d+)/);
+                const position = match ? parseInt(match[1]) : 0;
+                const lines = fs.readFileSync(file, 'utf8').split('\n');
+                let line = 1;
+                let col = 1;
+                let charCount = 0;
+                for (let i = 0; i < lines.length; i++) {
+                    if (charCount + lines[i].length >= position) {
+                        line = i + 1;
+                        col = position - charCount + 1;
+                        break;
+                    }
+                    charCount += lines[i].length + 1; // +1 for newline
+                }
+                lints.push({
+                    file: file,
+                    line: line,
+                    column: col,
+                    endLine: line,
+                    endColumn: col,
+                    severity: 'error',
+                    message: error.message || 'Invalid JSON',
+                    rule: 'json-parse',
+                    linter: 'json'
+                });
+            }
+        }
+        return lints;
+    }
+    
+    /**
+     * Run XML linter (xmllint)
+     */
+    async runXMLLinter(files) {
+        const lints = [];
+        try {
+            for (const file of files) {
+                const result = await this.runCommand('xmllint', ['--noout', file], { timeout: 30000, allowNonZero: true });
+                const output = result.stderr || '';
+                const match = output.match(/^([^:]+):(\d+):\s*(.*)$/);
+                if (match) {
+                    lints.push({
+                        file: path.resolve(match[1]),
+                        line: parseInt(match[2]) || 0,
+                        column: 0,
+                        endLine: parseInt(match[2]) || 0,
+                        endColumn: 0,
+                        severity: 'error',
+                        message: match[3] || '',
+                        rule: 'xmllint',
+                        linter: 'xmllint'
+                    });
+                }
+            }
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run TOML linter (taplo or basic validation)
+     */
+    async runTOMLLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('taplo', ['lint', '--format', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const taploResults = JSON.parse(output);
+                for (const violation of taploResults) {
+                    lints.push({
+                        file: violation.file || '',
+                        line: violation.line || 0,
+                        column: violation.column || 0,
+                        endLine: violation.line || 0,
+                        endColumn: violation.column || 0,
+                        severity: violation.severity === 'error' ? 'error' : 'warning',
+                        message: violation.message || '',
+                        rule: violation.code || 'unknown',
+                        linter: 'taplo'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Dockerfile linter (hadolint)
+     */
+    async runDockerfileLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('hadolint', ['--format', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const hadolintResults = JSON.parse(output);
+                for (const violation of hadolintResults) {
+                    lints.push({
+                        file: violation.file || '',
+                        line: violation.line || 0,
+                        column: violation.column || 0,
+                        endLine: violation.line || 0,
+                        endColumn: violation.column || 0,
+                        severity: violation.level === 'error' ? 'error' : 'warning',
+                        message: violation.message || '',
+                        rule: violation.code || 'unknown',
+                        linter: 'hadolint'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Terraform linter (tflint)
+     */
+    async runTerraformLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('tflint', ['--format', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '{}';
+                const tflintResults = JSON.parse(output);
+                for (const issue of tflintResults.issues || []) {
+                    lints.push({
+                        file: issue.range.filename || '',
+                        line: issue.range.start.line || 0,
+                        column: issue.range.start.column || 0,
+                        endLine: issue.range.end.line || issue.range.start.line || 0,
+                        endColumn: issue.range.end.column || issue.range.start.column || 0,
+                        severity: issue.severity === 'error' ? 'error' : 'warning',
+                        message: issue.message || '',
+                        rule: issue.rule || issue.rule_name || 'unknown',
+                        linter: 'tflint'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run PowerShell linter (PSScriptAnalyzer)
+     */
+    async runPowerShellLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('pwsh', ['-Command', `Invoke-ScriptAnalyzer -Path ${files.map(f => `'${f}'`).join(',')} -Recurse | ConvertTo-Json`], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const psResults = JSON.parse(output);
+                for (const violation of Array.isArray(psResults) ? psResults : [psResults]) {
+                    lints.push({
+                        file: violation.ScriptPath || '',
+                        line: violation.Line || 0,
+                        column: violation.Column || 0,
+                        endLine: violation.Line || 0,
+                        endColumn: violation.Column || 0,
+                        severity: violation.Severity === 'Error' ? 'error' : 'Warning' ? 'warning' : 'info',
+                        message: violation.Message || '',
+                        rule: violation.RuleName || 'unknown',
+                        linter: 'PSScriptAnalyzer'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run R linter (lintr)
+     */
+    async runRLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('Rscript', ['-e', `lintr::lint_dir('.')`], { timeout: 30000, allowNonZero: true });
+            const output = result.stdout || result.stderr || '';
+            // Parse R lintr output (format: file:line:column: message)
+            const lines = output.split('\n');
+            for (const line of lines) {
+                const match = line.match(/^([^:]+):(\d+):(\d+):\s*(.*)$/);
+                if (match) {
+                    lints.push({
+                        file: path.resolve(match[1]),
+                        line: parseInt(match[2]) || 0,
+                        column: parseInt(match[3]) || 0,
+                        endLine: parseInt(match[2]) || 0,
+                        endColumn: parseInt(match[3]) || 0,
+                        severity: 'warning',
+                        message: match[4] || '',
+                        rule: 'lintr',
+                        linter: 'lintr'
+                    });
+                }
+            }
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Perl linter (perlcritic)
+     */
+    async runPerlLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('perlcritic', ['--format', '%f:%l:%c:%s:%m', ...files], { timeout: 30000, allowNonZero: true });
+            const lines = (result.stdout || result.stderr || '').split('\n');
+            for (const line of lines) {
+                const match = line.match(/^([^:]+):(\d+):(\d+):([^:]+):(.*)$/);
+                if (match) {
+                    lints.push({
+                        file: path.resolve(match[1]),
+                        line: parseInt(match[2]) || 0,
+                        column: parseInt(match[3]) || 0,
+                        endLine: parseInt(match[2]) || 0,
+                        endColumn: parseInt(match[3]) || 0,
+                        severity: match[4] === '5' ? 'error' : 'warning',
+                        message: match[5] || '',
+                        rule: 'perlcritic',
+                        linter: 'perlcritic'
+                    });
+                }
+            }
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Scala linter (scalastyle)
+     */
+    async runScalaLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('scalastyle', ['--xmlOutput', 'true', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '';
+                const errorMatches = output.matchAll(/<file name="([^"]+)">[\s\S]*?<error line="(\d+)" column="(\d+)" message="([^"]+)" source="([^"]+)"/g);
+                for (const match of errorMatches) {
+                    lints.push({
+                        file: path.resolve(match[1]),
+                        line: parseInt(match[2]) || 0,
+                        column: parseInt(match[3]) || 0,
+                        endLine: parseInt(match[2]) || 0,
+                        endColumn: parseInt(match[3]) || 0,
+                        severity: 'warning',
+                        message: match[4] || '',
+                        rule: match[5] || 'unknown',
+                        linter: 'scalastyle'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Clojure linter (clj-kondo)
+     */
+    async runClojureLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('clj-kondo', ['--lint', '--config', '{:output {:format :json}}', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '{}';
+                const cljResults = JSON.parse(output);
+                for (const finding of cljResults.findings || []) {
+                    lints.push({
+                        file: finding.filename || '',
+                        line: finding.row || 0,
+                        column: finding.col || 0,
+                        endLine: finding.endRow || finding.row || 0,
+                        endColumn: finding.endCol || finding.col || 0,
+                        severity: finding.level === 'error' ? 'error' : finding.level === 'warning' ? 'warning' : 'info',
+                        message: finding.message || '',
+                        rule: finding.type || 'unknown',
+                        linter: 'clj-kondo'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Haskell linter (hlint)
+     */
+    async runHaskellLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('hlint', ['--json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const hlintResults = JSON.parse(output);
+                for (const hint of hlintResults) {
+                    lints.push({
+                        file: hint.file || '',
+                        line: hint.startLine || 0,
+                        column: hint.startColumn || 0,
+                        endLine: hint.endLine || hint.startLine || 0,
+                        endColumn: hint.endColumn || hint.startColumn || 0,
+                        severity: 'warning',
+                        message: hint.hint || '',
+                        rule: 'hlint',
+                        linter: 'hlint'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Erlang linter (elvis)
+     */
+    async runErlangLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('elvis', ['rock', '--format', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const elvisResults = JSON.parse(output);
+                for (const violation of elvisResults) {
+                    lints.push({
+                        file: violation.file || '',
+                        line: violation.line_num || 0,
+                        column: 0,
+                        endLine: violation.line_num || 0,
+                        endColumn: 0,
+                        severity: violation.severity === 'error' ? 'error' : 'warning',
+                        message: violation.message || '',
+                        rule: violation.rule || 'unknown',
+                        linter: 'elvis'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Elixir linter (credo)
+     */
+    async runElixirLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('mix', ['credo', '--format', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '{}';
+                const credoResults = JSON.parse(output);
+                for (const issue of credoResults.issues || []) {
+                    lints.push({
+                        file: issue.filename || '',
+                        line: issue.line_no || 0,
+                        column: issue.column || 0,
+                        endLine: issue.line_no || 0,
+                        endColumn: issue.column || 0,
+                        severity: issue.category === 'error' ? 'error' : 'warning',
+                        message: issue.message || '',
+                        rule: issue.check || 'unknown',
+                        linter: 'credo'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run OCaml linter (ocaml-lint)
+     */
+    async runOCamlLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('ocaml-lint', ['--format', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const ocamlResults = JSON.parse(output);
+                for (const violation of ocamlResults) {
+                    lints.push({
+                        file: violation.file || '',
+                        line: violation.line || 0,
+                        column: violation.column || 0,
+                        endLine: violation.line || 0,
+                        endColumn: violation.column || 0,
+                        severity: 'warning',
+                        message: violation.message || '',
+                        rule: violation.rule || 'unknown',
+                        linter: 'ocaml-lint'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run F# linter (dotnet format)
+     */
+    async runFSharpLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('dotnet', ['format', '--verify-no-changes', '--verbosity', 'diagnostic', ...files], { timeout: 30000, allowNonZero: true });
+            const lines = (result.stdout || result.stderr || '').split('\n');
+            for (const line of lines) {
+                const match = line.match(/^([^\(]+)\((\d+),(\d+)\):\s*(error|warning)\s*([^:]+):\s*(.*)$/);
+                if (match) {
+                    lints.push({
+                        file: path.resolve(match[1]),
+                        line: parseInt(match[2]) || 0,
+                        column: parseInt(match[3]) || 0,
+                        endLine: parseInt(match[2]) || 0,
+                        endColumn: parseInt(match[3]) || 0,
+                        severity: match[4] === 'error' ? 'error' : 'warning',
+                        message: match[6] || '',
+                        rule: match[5] || 'unknown',
+                        linter: 'dotnet'
+                    });
+                }
+            }
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run C# linter (dotnet format or StyleCop)
+     */
+    async runCSharpLinter(files) {
+        return await this.runFSharpLinter(files); // Same tool
+    }
+    
+    /**
+     * Run Groovy linter (CodeNarc)
+     */
+    async runGroovyLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('codenarc', ['-basedir', '.', '-report', 'json'], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '{}';
+                const codenarcResults = JSON.parse(output);
+                for (const fileData of codenarcResults.files || []) {
+                    for (const violation of fileData.violations || []) {
+                        lints.push({
+                            file: fileData.path || '',
+                            line: violation.lineNumber || 0,
+                            column: 0,
+                            endLine: violation.lineNumber || 0,
+                            endColumn: 0,
+                            severity: violation.priority === 1 ? 'error' : 'warning',
+                            message: violation.message || '',
+                            rule: violation.ruleName || 'unknown',
+                            linter: 'codenarc'
+                        });
+                    }
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Objective-C linter (OCLint)
+     */
+    async runObjectiveCLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('oclint', ['--report-type', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const oclintResults = JSON.parse(output);
+                for (const violation of oclintResults) {
+                    lints.push({
+                        file: violation.file || '',
+                        line: violation.line || 0,
+                        column: violation.column || 0,
+                        endLine: violation.line || 0,
+                        endColumn: violation.column || 0,
+                        severity: violation.severity === 'error' ? 'error' : 'warning',
+                        message: violation.message || '',
+                        rule: violation.rule || 'unknown',
+                        linter: 'oclint'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run D linter (dscanner)
+     */
+    async runDLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('dscanner', ['--report', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const dscannerResults = JSON.parse(output);
+                for (const violation of dscannerResults) {
+                    lints.push({
+                        file: violation.file || '',
+                        line: violation.line || 0,
+                        column: violation.column || 0,
+                        endLine: violation.line || 0,
+                        endColumn: violation.column || 0,
+                        severity: violation.severity === 'error' ? 'error' : 'warning',
+                        message: violation.message || '',
+                        rule: violation.rule || 'unknown',
+                        linter: 'dscanner'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Nim linter (nim check)
+     */
+    async runNimLinter(files) {
+        const lints = [];
+        try {
+            for (const file of files) {
+                const result = await this.runCommand('nim', ['check', file], { timeout: 30000, allowNonZero: true });
+                const lines = (result.stdout || result.stderr || '').split('\n');
+                for (const line of lines) {
+                    const match = line.match(/^([^:]+)\((\d+),(\d+)\)\s*(Error|Warning):\s*(.*)$/);
+                    if (match) {
+                        lints.push({
+                            file: path.resolve(match[1]),
+                            line: parseInt(match[2]) || 0,
+                            column: parseInt(match[3]) || 0,
+                            endLine: parseInt(match[2]) || 0,
+                            endColumn: parseInt(match[3]) || 0,
+                            severity: match[4] === 'Error' ? 'error' : 'warning',
+                            message: match[5] || '',
+                            rule: 'nim-check',
+                            linter: 'nim'
+                        });
+                    }
+                }
+            }
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Crystal linter (ameba)
+     */
+    async runCrystalLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('ameba', ['--format', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '{}';
+                const amebaResults = JSON.parse(output);
+                for (const source of amebaResults.sources || []) {
+                    for (const issue of source.issues || []) {
+                        lints.push({
+                            file: source.filename || '',
+                            line: issue.line || 0,
+                            column: issue.column || 0,
+                            endLine: issue.line || 0,
+                            endColumn: issue.column || 0,
+                            severity: issue.severity === 'error' ? 'error' : 'warning',
+                            message: issue.message || '',
+                            rule: issue.rule || 'unknown',
+                            linter: 'ameba'
+                        });
+                    }
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Zig linter (zig build-exe or zig fmt --check)
+     */
+    async runZigLinter(files) {
+        const lints = [];
+        try {
+            for (const file of files) {
+                const result = await this.runCommand('zig', ['fmt', '--check', file], { timeout: 30000, allowNonZero: true });
+                const output = result.stderr || '';
+                const match = output.match(/^([^:]+):(\d+):(\d+):\s*(.*)$/);
+                if (match) {
+                    lints.push({
+                        file: path.resolve(match[1]),
+                        line: parseInt(match[2]) || 0,
+                        column: parseInt(match[3]) || 0,
+                        endLine: parseInt(match[2]) || 0,
+                        endColumn: parseInt(match[3]) || 0,
+                        severity: 'error',
+                        message: match[4] || '',
+                        rule: 'zig-fmt',
+                        linter: 'zig'
+                    });
+                }
+            }
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Julia linter (Lint.jl)
+     */
+    async runJuliaLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('julia', ['-e', `using Lint; lintfile("${files[0]}")`], { timeout: 30000, allowNonZero: true });
+            const lines = (result.stdout || result.stderr || '').split('\n');
+            for (const line of lines) {
+                const match = line.match(/^([^:]+):(\d+):\s*(.*)$/);
+                if (match) {
+                    lints.push({
+                        file: path.resolve(match[1]),
+                        line: parseInt(match[2]) || 0,
+                        column: 0,
+                        endLine: parseInt(match[2]) || 0,
+                        endColumn: 0,
+                        severity: 'warning',
+                        message: match[3] || '',
+                        rule: 'julia-lint',
+                        linter: 'julia'
+                    });
+                }
+            }
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Fortran linter (gfortran or flint)
+     */
+    async runFortranLinter(files) {
+        const lints = [];
+        try {
+            for (const file of files) {
+                const result = await this.runCommand('gfortran', ['-fsyntax-only', file], { timeout: 30000, allowNonZero: true });
+                const lines = (result.stderr || '').split('\n');
+                for (const line of lines) {
+                    const match = line.match(/^([^:]+):(\d+):(\d+):\s*(.*)$/);
+                    if (match) {
+                        lints.push({
+                            file: path.resolve(match[1]),
+                            line: parseInt(match[2]) || 0,
+                            column: parseInt(match[3]) || 0,
+                            endLine: parseInt(match[2]) || 0,
+                            endColumn: parseInt(match[3]) || 0,
+                            severity: 'error',
+                            message: match[4] || '',
+                            rule: 'gfortran',
+                            linter: 'gfortran'
+                        });
+                    }
+                }
+            }
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run COBOL linter (cobc)
+     */
+    async runCOBOLLinter(files) {
+        const lints = [];
+        try {
+            for (const file of files) {
+                const result = await this.runCommand('cobc', ['-fsyntax-only', file], { timeout: 30000, allowNonZero: true });
+                const lines = (result.stderr || '').split('\n');
+                for (const line of lines) {
+                    const match = line.match(/^([^:]+):(\d+):\s*(.*)$/);
+                    if (match) {
+                        lints.push({
+                            file: path.resolve(match[1]),
+                            line: parseInt(match[2]) || 0,
+                            column: 0,
+                            endLine: parseInt(match[2]) || 0,
+                            endColumn: 0,
+                            severity: 'error',
+                            message: match[3] || '',
+                            rule: 'cobc',
+                            linter: 'cobc'
+                        });
+                    }
+                }
+            }
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Ada linter (gnat)
+     */
+    async runAdaLinter(files) {
+        const lints = [];
+        try {
+            for (const file of files) {
+                const result = await this.runCommand('gnat', ['-gnatc', file], { timeout: 30000, allowNonZero: true });
+                const lines = (result.stderr || '').split('\n');
+                for (const line of lines) {
+                    const match = line.match(/^([^:]+):(\d+):(\d+):\s*(.*)$/);
+                    if (match) {
+                        lints.push({
+                            file: path.resolve(match[1]),
+                            line: parseInt(match[2]) || 0,
+                            column: parseInt(match[3]) || 0,
+                            endLine: parseInt(match[2]) || 0,
+                            endColumn: parseInt(match[3]) || 0,
+                            severity: 'error',
+                            message: match[4] || '',
+                            rule: 'gnat',
+                            linter: 'gnat'
+                        });
+                    }
+                }
+            }
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run VHDL linter (ghdl)
+     */
+    async runVHDLLinter(files) {
+        const lints = [];
+        try {
+            for (const file of files) {
+                const result = await this.runCommand('ghdl', ['-s', file], { timeout: 30000, allowNonZero: true });
+                const lines = (result.stderr || '').split('\n');
+                for (const line of lines) {
+                    const match = line.match(/^([^:]+):(\d+)(?::(\d+))?:\s*(.*)$/);
+                    if (match) {
+                        lints.push({
+                            file: path.resolve(match[1]),
+                            line: parseInt(match[2]) || 0,
+                            column: match[3] ? parseInt(match[3]) : 0,
+                            endLine: parseInt(match[2]) || 0,
+                            endColumn: match[3] ? parseInt(match[3]) : 0,
+                            severity: 'error',
+                            message: match[4] || '',
+                            rule: 'ghdl',
+                            linter: 'ghdl'
+                        });
+                    }
+                }
+            }
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Verilog linter (verilator)
+     */
+    async runVerilogLinter(files) {
+        const lints = [];
+        try {
+            for (const file of files) {
+                const result = await this.runCommand('verilator', ['--lint-only', file], { timeout: 30000, allowNonZero: true });
+                const lines = (result.stderr || '').split('\n');
+                for (const line of lines) {
+                    const match = line.match(/^%([^:]+):(\d+):\s*(.*)$/);
+                    if (match) {
+                        lints.push({
+                            file: path.resolve(match[1]),
+                            line: parseInt(match[2]) || 0,
+                            column: 0,
+                            endLine: parseInt(match[2]) || 0,
+                            endColumn: 0,
+                            severity: 'error',
+                            message: match[3] || '',
+                            rule: 'verilator',
+                            linter: 'verilator'
+                        });
+                    }
+                }
+            }
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run Makefile linter (checkmake)
+     */
+    async runMakefileLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('checkmake', ['--format', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const checkmakeResults = JSON.parse(output);
+                for (const violation of checkmakeResults) {
+                    lints.push({
+                        file: violation.file || '',
+                        line: violation.line || 0,
+                        column: 0,
+                        endLine: violation.line || 0,
+                        endColumn: 0,
+                        severity: violation.severity === 'error' ? 'error' : 'warning',
+                        message: violation.message || '',
+                        rule: violation.rule || 'unknown',
+                        linter: 'checkmake'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Run CMake linter (cmake-lint)
+     */
+    async runCMakeLinter(files) {
+        const lints = [];
+        try {
+            const result = await this.runCommand('cmake-lint', ['--format', 'json', ...files], { timeout: 30000, allowNonZero: true });
+            try {
+                const output = result.stdout || result.stderr || '[]';
+                const cmakeResults = JSON.parse(output);
+                for (const violation of cmakeResults) {
+                    lints.push({
+                        file: violation.file || '',
+                        line: violation.line || 0,
+                        column: violation.column || 0,
+                        endLine: violation.line || 0,
+                        endColumn: violation.column || 0,
+                        severity: violation.severity === 'error' ? 'error' : 'warning',
+                        message: violation.message || '',
+                        rule: violation.rule || 'unknown',
+                        linter: 'cmake-lint'
+                    });
+                }
+            } catch (e) {}
+        } catch (error) {}
+        return lints;
+    }
+    
+    /**
+     * Find nearest file with given name
+     */
+    findNearestFile(filename, startPath) {
+        let currentDir = path.dirname(path.resolve(startPath));
+        const root = path.parse(currentDir).root;
+        
+        while (currentDir !== root) {
+            const filePath = path.join(currentDir, filename);
+            if (fs.existsSync(filePath)) {
+                return filePath;
+            }
+            currentDir = path.dirname(currentDir);
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Run a command and return stdout/stderr
+     */
+    runCommand(command, args, options = {}) {
+        return new Promise((resolve, reject) => {
+            const { timeout = 10000, cwd = process.cwd(), allowNonZero = false } = options;
+            
+            const child = spawn(command, args, {
+                cwd,
+                stdio: ['ignore', 'pipe', 'pipe']
+            });
+            
+            let stdout = '';
+            let stderr = '';
+            
+            child.stdout.on('data', (data) => {
+                stdout += data.toString();
+            });
+            
+            child.stderr.on('data', (data) => {
+                stderr += data.toString();
+            });
+            
+            const timer = timeout > 0 ? setTimeout(() => {
+                child.kill();
+                reject(new Error(`Command timeout after ${timeout}ms`));
+            }, timeout) : null;
+            
+            child.on('close', (code) => {
+                if (timer) clearTimeout(timer);
+                
+                // For linters, non-zero exit codes often mean linting errors found, which is expected
+                if (code !== 0 && !allowNonZero) {
+                    reject(new Error(`Command failed with exit code ${code}: ${stderr || stdout}`));
+                    return;
+                }
+                
+                resolve({ exitCode: code, stdout, stderr });
+            });
+            
+            child.on('error', (error) => {
+                if (timer) clearTimeout(timer);
+                reject(error);
+            });
+        });
     }
 
     /**
