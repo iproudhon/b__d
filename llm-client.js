@@ -267,6 +267,8 @@ class LLMClient extends EventEmitter {
 
     /**
      * Execute read_file tool
+     * Format: Lines are numbered starting at 1, using format LINE_NUMBER|LINE_CONTENT
+     * LINE_NUMBER is right-aligned to 6 characters
      */
     async executeReadFile(args) {
         const toolName = 'read_file';
@@ -274,23 +276,85 @@ class LLMClient extends EventEmitter {
         
         try {
             const { target_file, offset, limit } = args;
+            
+            if (!target_file) {
+                throw new Error('target_file parameter is required');
+            }
+            
             const fullPath = path.isAbsolute(target_file) ? target_file : path.join(process.cwd(), target_file);
             
+            // Check if file exists
+            if (!fs.existsSync(fullPath)) {
+                throw new Error(`File not found: ${target_file}`);
+            }
+            
+            // Check if it's a file (not a directory)
+            const stats = fs.statSync(fullPath);
+            if (!stats.isFile()) {
+                throw new Error(`${target_file} is not a file`);
+            }
+            
+            // Read file content
             let content = fs.readFileSync(fullPath, 'utf8');
             
-            if (offset !== undefined || limit !== undefined) {
-                const lines = content.split('\n');
-                const start = offset || 0;
-                const end = limit ? start + limit : lines.length;
-                content = lines.slice(start, end).join('\n');
+            // Handle empty file
+            if (content.length === 0) {
+                const result = { content: 'File is empty.' };
+                this.emit('tool:complete', { toolName, args, result });
+                return result;
             }
+            
+            // Split into lines
+            const lines = content.split('\n');
+            
+            // Handle offset and limit (offset is 1-indexed per spec)
+            let startLine = 0;
+            let endLine = lines.length;
+            
+            if (offset !== undefined) {
+                // Convert 1-indexed offset to 0-indexed array index
+                if (offset < 1) {
+                    throw new Error(`offset must be >= 1 (1-indexed line numbers), got ${offset}`);
+                }
+                startLine = offset - 1;
+            }
+            
+            if (limit !== undefined) {
+                if (limit < 0) {
+                    throw new Error(`limit must be >= 0, got ${limit}`);
+                }
+                endLine = startLine + limit;
+            }
+            
+            // Slice lines
+            const selectedLines = lines.slice(startLine, endLine);
+            
+            // Format lines with line numbers: LINE_NUMBER|LINE_CONTENT
+            // LINE_NUMBER is right-aligned to 6 characters, starting at 1
+            const formattedLines = selectedLines.map((line, index) => {
+                const lineNumber = startLine + index + 1; // 1-indexed line number
+                const lineNumberStr = String(lineNumber).padStart(6, ' ');
+                return `${lineNumberStr}|${line}`;
+            });
+            
+            content = formattedLines.join('\n');
             
             const result = { content };
             this.emit('tool:complete', { toolName, args, result });
             return result;
         } catch (error) {
-            this.emit('tool:error', { toolName, args, error: error.message });
-            throw error;
+            // Provide clearer error messages
+            let errorMessage = error.message;
+            if (error.code === 'ENOENT') {
+                errorMessage = `File not found: ${args.target_file || 'unknown'}`;
+            } else if (error.code === 'EACCES' || error.code === 'EPERM') {
+                errorMessage = `Permission denied: ${args.target_file || 'unknown'}`;
+            } else if (error.code === 'EISDIR') {
+                errorMessage = `${args.target_file || 'unknown'} is a directory, not a file`;
+            }
+            
+            this.emit('tool:error', { toolName, args, error: errorMessage });
+            throw new Error(errorMessage);
         }
     }
 
@@ -405,9 +469,25 @@ class LLMClient extends EventEmitter {
         
         try {
             const { target_directory, ignore_globs = [] } = args;
-            const fullPath = target_directory
-                ? (path.isAbsolute(target_directory) ? target_directory : path.join(process.cwd(), target_directory))
-                : process.cwd();
+            
+            if (!target_directory) {
+                throw new Error('target_directory parameter is required');
+            }
+            
+            const fullPath = path.isAbsolute(target_directory) 
+                ? target_directory 
+                : path.join(process.cwd(), target_directory);
+            
+            // Check if directory exists
+            if (!fs.existsSync(fullPath)) {
+                throw new Error(`Directory not found: ${target_directory}`);
+            }
+            
+            // Check if it's actually a directory
+            const stats = fs.statSync(fullPath);
+            if (!stats.isDirectory()) {
+                throw new Error(`${target_directory} is not a directory`);
+            }
             
             // Process ignore globs - prepend **/ if not starting with **/
             const processedIgnores = ignore_globs.map(glob => {
@@ -417,71 +497,247 @@ class LLMClient extends EventEmitter {
                 return glob;
             });
             
-            const items = fs.readdirSync(fullPath, { withFileTypes: true });
-            const resultItems = [];
-            
-            for (const item of items) {
-                // Skip dot files and directories
-                if (item.name.startsWith('.')) {
-                    continue;
-                }
+            function globToRegex(glob) {
+                // Convert glob pattern to regex
+                // Strategy: Build regex parts separately to avoid escaping issues
+                let regex = '';
                 
-                // Check ignore globs
-                let shouldIgnore = false;
-                const relativePath = path.relative(fullPath, path.join(fullPath, item.name)).replace(/\\/g, '/');
-                
-                function globToRegex(glob) {
-                    // Convert glob pattern to regex
-                    // First escape all special regex characters except * ? and .
-                    let regex = glob
-                        .replace(/\\/g, '\\\\')
-                        .replace(/\^/g, '\\^')
-                        .replace(/\$/g, '\\$')
-                        .replace(/\+/g, '\\+')
-                        .replace(/\[/g, '\\[')
-                        .replace(/\]/g, '\\]')
-                        .replace(/\{/g, '\\{')
-                        .replace(/\}/g, '\\}')
-                        .replace(/\(/g, '\\(')
-                        .replace(/\)/g, '\\)')
-                        .replace(/\|/g, '\\|');
-                    
-                    // Handle glob special characters
-                    regex = regex
-                        .replace(/\*\*/g, '__DOUBLE_STAR__')
-                        .replace(/\*/g, '[^/]*')
-                        .replace(/__DOUBLE_STAR__/g, '.*')
-                        .replace(/\?/g, '[^/]');
-                    
-                    // Escape dots after handling * and ? (so dots in character classes aren't escaped)
-                    regex = regex.replace(/\./g, '\\.');
-                    
-                    return new RegExp('^' + regex + '$');
-                }
-                
-                for (const ignoreGlob of processedIgnores) {
-                    const regex = globToRegex(ignoreGlob);
-                    
-                    if (regex.test(relativePath) || regex.test(item.name)) {
-                        shouldIgnore = true;
-                        break;
+                // Handle **/ prefix - match at any depth (zero or more directories)
+                if (glob.startsWith('**/')) {
+                    regex += '(.*/)?';  // Zero or more directories + /
+                    glob = glob.substring(3);  // Remove **/ prefix
+                } else {
+                    // Replace **/ in middle of pattern
+                    const parts = glob.split('**/');
+                    if (parts.length > 1) {
+                        // Escape and process first part, add (.*/)?, then process rest
+                        for (let i = 0; i < parts.length; i++) {
+                            if (i > 0) {
+                                regex += '(.*/)?';  // Add (.*/)? between parts
+                            }
+                            // Process this part (will escape and convert below)
+                            const part = parts[i];
+                            // Escape special chars except * and ?
+                            let escaped = part
+                                .replace(/\\/g, '\\\\')
+                                .replace(/\^/g, '\\^')
+                                .replace(/\$/g, '\\$')
+                                .replace(/\+/g, '\\+')
+                                .replace(/\[/g, '\\[')
+                                .replace(/\]/g, '\\]')
+                                .replace(/\{/g, '\\{')
+                                .replace(/\}/g, '\\}')
+                                .replace(/\(/g, '\\(')
+                                .replace(/\)/g, '\\)')
+                                .replace(/\./g, '\\.')
+                                .replace(/\|/g, '\\|');
+                            // Replace * and ? (these don't match /)
+                            escaped = escaped.replace(/\*/g, '[^/]*');
+                            escaped = escaped.replace(/\?/g, '[^/]');
+                            regex += escaped;
+                        }
+                        return new RegExp('^' + regex + '$');
                     }
                 }
                 
-                if (!shouldIgnore) {
-                    resultItems.push({
-                        name: item.name,
-                        type: item.isDirectory() ? 'directory' : 'file'
-                    });
+                // Replace remaining ** with .*
+                glob = glob.replace(/\*\*/g, '.*');
+                
+                // Escape special regex characters (except * and ? which we handle next)
+                let escaped = glob
+                    .replace(/\\/g, '\\\\')
+                    .replace(/\^/g, '\\^')
+                    .replace(/\$/g, '\\$')
+                    .replace(/\+/g, '\\+')
+                    .replace(/\[/g, '\\[')
+                    .replace(/\]/g, '\\]')
+                    .replace(/\{/g, '\\{')
+                    .replace(/\}/g, '\\}')
+                    .replace(/\(/g, '\\(')
+                    .replace(/\)/g, '\\)')
+                    .replace(/\./g, '\\.')
+                    .replace(/\|/g, '\\|');
+                
+                // Handle single * and ? (these shouldn't match /)
+                escaped = escaped.replace(/\*/g, '[^/]*');
+                escaped = escaped.replace(/\?/g, '[^/]');
+                
+                regex += escaped;
+                
+                return new RegExp('^' + regex + '$');
+            }
+            
+            /**
+             * Recursively build directory tree structure (two levels deep)
+             * Returns array of strings representing the tree structure
+             */
+            function buildDirectoryTree(dirPath, basePath, depth = 0, maxDepth = 2) {
+                const treeItems = [];
+                
+                if (depth >= maxDepth) {
+                    return treeItems;
+                }
+                
+                try {
+                    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+                    const files = [];
+                    const dirs = [];
+                    
+                    // Separate files and directories, filter dot files
+                    for (const entry of entries) {
+                        if (entry.name.startsWith('.')) {
+                            continue;
+                        }
+                        
+                        const relativePath = path.relative(basePath, path.join(dirPath, entry.name)).replace(/\\/g, '/');
+                        
+                        // Check ignore globs
+                        let shouldIgnore = false;
+                        for (const ignoreGlob of processedIgnores) {
+                            const regex = globToRegex(ignoreGlob);
+                            if (regex.test(relativePath) || regex.test(entry.name)) {
+                                shouldIgnore = true;
+                                break;
+                            }
+                        }
+                        
+                        if (!shouldIgnore) {
+                            if (entry.isDirectory()) {
+                                dirs.push(entry);
+                            } else {
+                                files.push(entry);
+                            }
+                        }
+                    }
+                    
+                    // Sort: directories first, then files, both alphabetically
+                    dirs.sort((a, b) => a.name.localeCompare(b.name));
+                    files.sort((a, b) => a.name.localeCompare(b.name));
+                    
+                    // Add directories with their contents (if depth < maxDepth - 1)
+                    for (const dir of dirs) {
+                        const dirPath_full = path.join(dirPath, dir.name);
+                        const indent = '  '.repeat(depth + 1);
+                        treeItems.push(`${indent}- ${dir.name}/`);
+                        
+                        if (depth < maxDepth - 1) {
+                            // Recurse into subdirectory
+                            const subTree = buildDirectoryTree(dirPath_full, basePath, depth + 1, maxDepth);
+                            treeItems.push(...subTree);
+                        } else {
+                            // At max depth, show summary of subtree
+                            const subtreeSummary = getSubtreeSummary(dirPath_full, basePath);
+                            if (subtreeSummary) {
+                                treeItems.push(`${indent}  ${subtreeSummary}`);
+                            }
+                        }
+                    }
+                    
+                    // Add files
+                    for (const file of files) {
+                        const indent = '  '.repeat(depth + 1);
+                        treeItems.push(`${indent}- ${file.name}`);
+                    }
+                } catch (e) {
+                    // Skip directories we can't read
+                }
+                
+                return treeItems;
+            }
+            
+            /**
+             * Get summary of files in subtree (for directories at max depth)
+             * Returns string like "[32 files in subtree: 32 *.go]"
+             */
+            function getSubtreeSummary(dirPath, basePath) {
+                try {
+                    const fileCounts = new Map(); // extension -> count
+                    let totalFiles = 0;
+                    
+                    function countFilesRecursive(currentPath, currentDepth = 0, maxRecurseDepth = 10) {
+                        if (currentDepth > maxRecurseDepth) return;
+                        
+                        try {
+                            const entries = fs.readdirSync(currentPath, { withFileTypes: true });
+                            
+                            for (const entry of entries) {
+                                if (entry.name.startsWith('.')) {
+                                    continue;
+                                }
+                                
+                                const relativePath = path.relative(basePath, path.join(currentPath, entry.name)).replace(/\\/g, '/');
+                                
+                                // Check ignore globs
+                                let shouldIgnore = false;
+                                for (const ignoreGlob of processedIgnores) {
+                                    const regex = globToRegex(ignoreGlob);
+                                    if (regex.test(relativePath) || regex.test(entry.name)) {
+                                        shouldIgnore = true;
+                                        break;
+                                    }
+                                }
+                                
+                                if (shouldIgnore) continue;
+                                
+                                if (entry.isDirectory()) {
+                                    countFilesRecursive(path.join(currentPath, entry.name), currentDepth + 1, maxRecurseDepth);
+                                } else {
+                                    totalFiles++;
+                                    const ext = path.extname(entry.name) || '*no-ext';
+                                    fileCounts.set(ext, (fileCounts.get(ext) || 0) + 1);
+                                }
+                            }
+                        } catch (e) {
+                            // Skip directories we can't read
+                        }
+                    }
+                    
+                    countFilesRecursive(dirPath);
+                    
+                    if (totalFiles === 0) {
+                        return null; // Empty directory, don't show summary
+                    }
+                    
+                    // Build summary string
+                    const parts = [];
+                    const sortedExts = Array.from(fileCounts.entries())
+                        .sort((a, b) => b[1] - a[1]) // Sort by count descending
+                        .slice(0, 5); // Limit to top 5 extensions
+                    
+                    for (const [ext, count] of sortedExts) {
+                        const pattern = ext === '*no-ext' ? '*no-ext' : `*${ext}`;
+                        parts.push(`${count} ${pattern}`);
+                    }
+                    
+                    const summary = `[${totalFiles} file${totalFiles !== 1 ? 's' : ''} in subtree: ${parts.join(', ')}${fileCounts.size > 5 ? ', ...' : ''}]`;
+                    return summary;
+                } catch (e) {
+                    return null;
                 }
             }
             
-            const result = { items: resultItems };
+            // Build the tree structure
+            const treeLines = buildDirectoryTree(fullPath, fullPath, 0, 2);
+            
+            // Start with the directory path (matching Cursor IDE format)
+            const result = { 
+                tree: `${fullPath}/\n${treeLines.join('\n')}`
+            };
             this.emit('tool:complete', { toolName, args, result });
             return result;
         } catch (error) {
-            this.emit('tool:error', { toolName, args, error: error.message });
-            throw error;
+            // Provide clearer error messages
+            let errorMessage = error.message;
+            if (error.code === 'ENOENT') {
+                errorMessage = `Directory not found: ${args.target_directory || 'unknown'}`;
+            } else if (error.code === 'ENOTDIR') {
+                errorMessage = `${args.target_directory || 'unknown'} is not a directory`;
+            } else if (error.code === 'EACCES' || error.code === 'EPERM') {
+                errorMessage = `Permission denied: ${args.target_directory || 'unknown'}`;
+            }
+            
+            this.emit('tool:error', { toolName, args, error: errorMessage });
+            throw new Error(errorMessage);
         }
     }
 
@@ -494,11 +750,27 @@ class LLMClient extends EventEmitter {
         
         try {
             const { glob_pattern, target_directory } = args;
+            
+            if (!glob_pattern) {
+                throw new Error('glob_pattern parameter is required');
+            }
+            
             const baseDir = target_directory 
                 ? (path.isAbsolute(target_directory) ? target_directory : path.join(process.cwd(), target_directory))
                 : process.cwd();
             
-            // Convert glob pattern - prepend **/ if not starting with **/
+            // Check if base directory exists
+            if (!fs.existsSync(baseDir)) {
+                throw new Error(`Directory not found: ${target_directory || process.cwd()}`);
+            }
+            
+            // Check if it's actually a directory
+            const stats = fs.statSync(baseDir);
+            if (!stats.isDirectory()) {
+                throw new Error(`${target_directory || process.cwd()} is not a directory`);
+            }
+            
+            // Convert glob pattern - prepend **/ if not starting with **/ or /
             let searchPattern = glob_pattern;
             if (!searchPattern.startsWith('**/') && !searchPattern.startsWith('/')) {
                 searchPattern = '**/' + searchPattern;
@@ -511,9 +783,53 @@ class LLMClient extends EventEmitter {
             
             function globToRegex(glob) {
                 // Convert glob pattern to regex
-                // First escape all special regex characters except * ? and .
-                let regex = glob
-                    .replace(/\\/g, '\\\\')
+                // Strategy: Build regex parts separately to avoid escaping issues
+                let regex = '';
+                
+                // Handle **/ prefix - match at any depth (zero or more directories)
+                if (glob.startsWith('**/')) {
+                    regex += '(.*/)?';  // Zero or more directories + /
+                    glob = glob.substring(3);  // Remove **/ prefix
+                } else {
+                    // Replace **/ in middle of pattern
+                    const parts = glob.split('**/');
+                    if (parts.length > 1) {
+                        // Escape and process each part separately
+                        for (let i = 0; i < parts.length; i++) {
+                            if (i > 0) {
+                                regex += '(.*/)?';  // Add (.*/)? between parts
+                            }
+                            const part = parts[i];
+                            // Escape special chars (order matters: backslashes first, then others)
+                            let escaped = part
+                                .replace(/\\/g, '\\\\')  // Escape backslashes first
+                                .replace(/\./g, '\\.')   // Then escape dots
+                                .replace(/\^/g, '\\^')
+                                .replace(/\$/g, '\\$')
+                                .replace(/\+/g, '\\+')
+                                .replace(/\[/g, '\\[')
+                                .replace(/\]/g, '\\]')
+                                .replace(/\{/g, '\\{')
+                                .replace(/\}/g, '\\}')
+                                .replace(/\(/g, '\\(')
+                                .replace(/\)/g, '\\)')
+                                .replace(/\|/g, '\\|');
+                            // Replace * and ? (these don't match /)
+                            escaped = escaped.replace(/\*/g, '[^/]*');
+                            escaped = escaped.replace(/\?/g, '[^/]');
+                            regex += escaped;
+                        }
+                        return new RegExp('^' + regex + '$');
+                    }
+                }
+                
+                // Replace remaining ** with .*
+                glob = glob.replace(/\*\*/g, '.*');
+                
+                // Escape special regex characters (order matters: backslashes first, then others)
+                let escaped = glob
+                    .replace(/\\/g, '\\\\')  // Escape backslashes first
+                    .replace(/\./g, '\\.')  // Then escape dots
                     .replace(/\^/g, '\\^')
                     .replace(/\$/g, '\\$')
                     .replace(/\+/g, '\\+')
@@ -525,15 +841,11 @@ class LLMClient extends EventEmitter {
                     .replace(/\)/g, '\\)')
                     .replace(/\|/g, '\\|');
                 
-                // Handle glob special characters
-                regex = regex
-                    .replace(/\*\*/g, '__DOUBLE_STAR__')
-                    .replace(/\*/g, '[^/]*')
-                    .replace(/__DOUBLE_STAR__/g, '.*')
-                    .replace(/\?/g, '[^/]');
+                // Handle single * and ? (these shouldn't match /)
+                escaped = escaped.replace(/\*/g, '[^/]*');
+                escaped = escaped.replace(/\?/g, '[^/]');
                 
-                // Escape dots after handling * and ? (so dots in character classes aren't escaped)
-                regex = regex.replace(/\./g, '\\.');
+                regex += escaped;
                 
                 return new RegExp('^' + regex + '$');
             }
@@ -551,20 +863,26 @@ class LLMClient extends EventEmitter {
                         const relativePath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
                         
                         if (entry.isDirectory()) {
-                            if (hasRecursive || depth === 0) {
-                                walkDir(fullPath, depth + 1, maxDepth);
+                            // Skip dot directories
+                            if (!entry.name.startsWith('.')) {
+                                if (hasRecursive || depth === 0) {
+                                    walkDir(fullPath, depth + 1, maxDepth);
+                                }
                             }
                         } else if (entry.isFile()) {
-                            // Test against relative path and filename
-                            if (regexPattern.test(relativePath) || regexPattern.test(entry.name)) {
-                                try {
-                                    const stats = fs.statSync(fullPath);
-                                    results.push({
-                                        path: fullPath,
-                                        mtime: stats.mtime.getTime()
-                                    });
-                                } catch (e) {
-                                    // Skip files we can't stat
+                            // Skip dot files
+                            if (!entry.name.startsWith('.')) {
+                                // Test against relative path (this handles both root and subdirectory files)
+                                if (regexPattern.test(relativePath)) {
+                                    try {
+                                        const stats = fs.statSync(fullPath);
+                                        results.push({
+                                            path: fullPath,
+                                            mtime: stats.mtime.getTime()
+                                        });
+                                    } catch (e) {
+                                        // Skip files we can't stat
+                                    }
                                 }
                             }
                         }
@@ -585,8 +903,18 @@ class LLMClient extends EventEmitter {
             this.emit('tool:complete', { toolName, args, result });
             return result;
         } catch (error) {
-            this.emit('tool:error', { toolName, args, error: error.message });
-            throw error;
+            // Provide clearer error messages
+            let errorMessage = error.message;
+            if (error.code === 'ENOENT') {
+                errorMessage = `Directory not found: ${args.target_directory || process.cwd()}`;
+            } else if (error.code === 'ENOTDIR') {
+                errorMessage = `${args.target_directory || process.cwd()} is not a directory`;
+            } else if (error.code === 'EACCES' || error.code === 'EPERM') {
+                errorMessage = `Permission denied: ${args.target_directory || process.cwd()}`;
+            }
+            
+            this.emit('tool:error', { toolName, args, error: errorMessage });
+            throw new Error(errorMessage);
         }
     }
 
